@@ -1,0 +1,15 @@
+{
+  "name": "gnss-lite",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "test": "node test/core.test.js && node test/dxf.test.js && node test/nlu.test.js",
+    "build:site": "node scripts/build-site.js",
+    "build:sdk":"esbuild vendor/sdk-entry.js --bundle --format=iife --platform=browser --minify --outfile=vendor/anthropic.bundle.js"
+  },
+  "devDependencies": {
+    "@anthropic-ai/sdk": "^0.131.0",
+    "esbuild": "^0.28.2",
+    "proj4": "^2.22.0"
+  }
+}

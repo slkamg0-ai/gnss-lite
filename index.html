@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#0b3d2e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>간이측량기</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="style.css?v=6">
+</head>
+<body>
+<header id="top">
+  <button id="undoBtn" class="undoBtn" aria-label="실행 취소" disabled>↶</button>
+  <div class="row1">
+    <button id="fixBadge" class="badge none" data-go="settings" aria-label="수신 상태 (설정으로)">NO FIX</button>
+    <div class="kv"><small>위성</small><b id="vSats">–</b></div>
+    <div class="kv"><small>기울기</small><b id="vTilt">–</b></div>
+    <div class="kv"><small>정밀도 H / V</small><b id="vAcc">–</b></div>
+    <div class="kv"><small>소스</small><b id="vSrc">–</b></div>
+  </div>
+  <div class="row2">
+    <div class="kv"><small>N (X)</small><b id="vN">–</b></div>
+    <div class="kv"><small>E (Y)</small><b id="vE">–</b></div>
+    <div class="kv"><small>지반고 GL</small><b id="vZ">–</b></div>
+  </div>
+  <div id="warn" class="warn" hidden></div>
+</header>
+
+<main>
+<!-- ═══ 찾기(스테이크아웃): 선형·관로 / 점 ═══ -->
+<section id="tab-stake" class="tab">
+  <div class="seg3 full" id="modeSw"><button data-mode="line" class="on">선형 · 관로<br><small>측점·오프셋·높이</small></button><button data-mode="pt">점<br><small>좌표·저장점·도면점</small></button></div>
+  <div id="linePanel">
+    <div class="row gap">
+      <select id="segSel" aria-label="선형 선택"></select>
+      <button class="ghost" data-go="segs">선형 편집</button>
+    </div>
+    <div id="segInfo" class="segInfo"></div>
+    <div id="chips" class="chips" role="listbox" aria-label="측점"></div>
+  </div>
+  <div id="ptPanel" hidden>
+    <select id="ptTgtSel" aria-label="찾을 점"></select>
+    <details class="card"><summary>좌표 직접 입력으로 찾기</summary>
+      <div class="form">
+        <label>이름<input id="ptmName" placeholder="P1"></label><label>설계 표고 Z (선택)<input id="ptmZ" type="number" step="0.001" inputmode="decimal"></label>
+        <label>N (X)<input id="ptmN" type="number" step="0.001" inputmode="decimal"></label><label>E (Y)<input id="ptmE" type="number" step="0.001" inputmode="decimal"></label>
+      </div>
+      <button id="ptmSet" class="ghost">이 좌표를 목표로</button></details>
+  </div>
+
+  <div class="card target">
+    <div class="tHead"><span id="tName">–</span><span id="tDes">–</span></div>
+    <canvas id="bull" aria-label="스테이크아웃 조준판"></canvas>
+    <div class="guide">
+      <div><small id="gFwdL">전 / 후</small><b id="gFwd">–</b></div>
+      <div><small id="gRightL">좌 / 우</small><b id="gRight">–</b></div>
+      <div><small>거리</small><b id="gDist">–</b></div>
+    </div>
+    <div class="glbox">
+      <div><small>현재 GL</small><b id="glLive">–</b></div>
+      <div><small id="glDesL">굴착저면(설계)</small><b id="glDes">–</b></div>
+      <div id="cutBox" class="cutbox"><small id="cutL">실시간 터파기</small><b id="cutLive">–</b></div>
+    </div>
+  </div>
+
+  <button id="btnShot" class="big primary">📍 확정 측정 (평균)</button>
+  <div id="shotResult"></div>
+  <div class="row gap">
+    <button id="btnPrev" class="big ghost">◀ 이전</button>
+    <button id="btnNext" class="big ghost">다음 ▶</button>
+  </div>
+
+  <div id="simPad" class="card simpad" hidden>
+    <div class="simHead"><b>가상 이동 (데모)</b>
+      <span class="seg3" id="simFix"><button data-fx="FIXED" class="on">FIXED</button><button data-fx="FLOAT">FLOAT</button><button data-fx="SINGLE">SINGLE</button></span></div>
+    <div class="pad">
+      <button data-mv="1,0">▲ 북 1m</button><button data-mv="0.1,0">▲ 10cm</button>
+      <button data-mv="0,-1">◀ 서 1m</button><button data-mv="0,-0.1">◀ 10cm</button>
+      <button data-mv="0,0.1">10cm ▶</button><button data-mv="0,1">동 1m ▶</button>
+      <button data-mv="-0.1,0">▼ 10cm</button><button data-mv="-1,0">▼ 남 1m</button>
+    </div>
+    <div class="seg3 spaced" id="simTilt"><button data-tt="0" class="on">수직</button><button data-tt="3">3°</button><button data-tt="8">8°</button>
+      <button data-taz="0" class="on">북</button><button data-taz="90">동</button><button data-taz="180">남</button><button data-taz="270">서</button></div>
+    <div class="row gap"><button id="simGoto" class="ghost">목표 근처로 이동</button><button id="simMag" class="ghost">자력 양호</button></div>
+  </div>
+</section>
+
+<!-- ═══ 측량 ═══ -->
+<section id="tab-survey" class="tab" hidden>
+  <div class="card">
+    <div class="row gap">
+      <input id="ptName" placeholder="점 이름 (자동)" aria-label="점 이름">
+      <input id="ptCode" placeholder="코드/메모" aria-label="코드">
+    </div>
+    <button id="btnPt" class="big primary">📍 점 측량 (평균)</button>
+  </div>
+  <div id="measure" class="card" hidden></div>
+  <div class="row gap"><h3>측량점 <span id="ptCount" class="cnt"></span></h3>
+    <button id="btnPtClear" class="ghost sm">전체 삭제</button></div>
+  <div id="ptList" class="list"></div>
+  <details class="card"><summary>좌표 붙여넣기 가져오기 (이름,N,E,Z)</summary>
+    <textarea id="importTxt" rows="4" placeholder="MH1,1000.000,2000.000,10.000&#10;MH2,1030,2040,9.7"></textarea>
+    <button id="btnImport" class="ghost">가져오기</button></details>
+
+  <div class="card" id="areaCard">
+    <div class="row gap"><h3>면적 · 둘레 · 연장</h3></div>
+    <div class="row gap"><select id="areaSel" aria-label="면적 선택"></select><button id="areaNew" class="ghost sm">＋ 새로</button><button id="areaDel" class="ghost sm danger">삭제</button></div>
+    <input id="areaName" placeholder="이름" aria-label="면적 이름" style="margin-top:8px">
+    <div class="row gap" style="margin-top:8px"><button id="areaMeasure" class="primary">📍 현재 위치 추가</button><button id="areaUndo" class="ghost">↶ 마지막 취소</button></div>
+    <div class="row gap" style="margin-top:8px"><select id="areaPick" aria-label="점 목록에서 추가"></select><button id="areaToggle" class="ghost">닫힘</button></div>
+    <div id="areaRes" class="areaRes"></div>
+    <div id="areaPts" class="list"></div>
+    <p class="hint">꼭짓점을 <b>차례대로</b> 추가하세요(측량 · 저장점 · 도면 탭에서 점/폴리라인 선택). 닫힘=면적·둘레, 열림=선 연장. 평면 면적입니다.</p>
+  </div>
+</section>
+
+<!-- ═══ 도면 ═══ -->
+<section id="tab-map" class="tab" hidden>
+  <div class="row gap dxfBar">
+    <label class="btn ghost">📂 DXF 불러오기<input id="dxfFile" type="file" accept=".dxf,.DXF" hidden></label>
+    <button id="dxfLayers" class="ghost">레이어</button><button id="dxfToggle" class="ghost">배경 켜짐</button>
+  </div>
+  <div id="dxfInfo" class="hint dxfInfo" hidden></div>
+  <div id="layerPanel" class="card layerPanel" hidden></div>
+  <div class="mapWrap">
+    <canvas id="map" aria-label="평면도"></canvas>
+    <div class="mapBtns">
+      <button id="mFit" aria-label="전체 보기">⤢</button>
+      <button id="mSeg" aria-label="선형 맞춤">📏</button>
+      <button id="mFollow" aria-label="현위치 따라가기">◎</button>
+      <button id="mIn" aria-label="확대">＋</button>
+      <button id="mOut" aria-label="축소">－</button>
+    </div>
+    <div id="pick" class="pick" hidden></div>
+  </div>
+  <div class="row gap exports">
+    <button id="xDxf" class="ghost">DXF</button>
+    <button id="xCsv" class="ghost">점 CSV</button>
+    <button id="xSheet" class="ghost">선형표 CSV</button>
+    <button id="xFind" class="ghost">찾기결과 CSV</button>
+    <button id="xArea" class="ghost">면적 CSV</button>
+    <button id="xPrint" class="primary">출력 / PDF</button>
+  </div>
+</section>
+
+<!-- ═══ 선형(관로·도로·경계 등) ═══ -->
+<section id="tab-segs" class="tab" hidden>
+  <div class="row gap"><h3>선형 · 관로</h3><button id="segAdd" class="primary sm">＋ 관로</button><button id="segAddLine" class="primary sm">＋ 선형</button></div>
+  <div id="segList"></div>
+  <details class="card"><summary>좌표 붙여넣기로 선형 만들기 (이름,N,E,Z — Z 생략 가능)</summary>
+    <textarea id="segPaste" rows="4" placeholder="A,510128,177803,10.0&#10;,510150,177830&#10;B,510158,177843,9.7"></textarea>
+    <div class="row gap"><select id="segPasteKind"><option value="line">일반 선형</option><option value="pipe">관로</option></select><button id="segPasteGo" class="ghost">만들기</button></div></details>
+  <p class="hint">도면 탭에서 DXF를 불러온 뒤 <b>폴리라인/선을 탭 → “선형으로 사용”</b>, 원(맨홀)을 두 번 탭 → “관로 시점/종점” 으로도 만들 수 있습니다.</p>
+</section>
+
+<!-- ═══ 설정 ═══ -->
+<section id="tab-settings" class="tab" hidden>
+  <div class="card">
+    <h3>위치 소스</h3>
+    <div class="seg3 full" id="srcSel">
+      <button data-src="geo">폰 GPS<br><small>SW Maps/Lefebure 모의위치</small></button>
+      <button data-src="serial">USB 시리얼<br><small>UM982 NMEA 직결</small></button>
+      <button data-src="ble">ESP32 BLE<br><small>NTRIP+IMU 브리지</small></button>
+      <button data-src="sim">데모<br><small>가상 위치</small></button>
+    </div>
+    <div id="bleBox" hidden>
+      <button id="btnBle" class="primary">ESP32 연결 (BLE)</button>
+      <details class="card"><summary>브리지 설정 (Wi-Fi 핫스팟 · NTRIP)</summary>
+        <div class="form">
+          <label>핫스팟 SSID<input id="cfgSsid" autocomplete="off"></label><label>핫스팟 비밀번호<input id="cfgWpw" type="password" autocomplete="off"></label>
+          <label>NTRIP 서버<input id="cfgHost" placeholder="vrs.ngii.go.kr"></label><label>포트<input id="cfgPort" type="number" placeholder="2101"></label>
+          <label>마운트포인트<input id="cfgMount" autocomplete="off"></label><label>아이디<input id="cfgUser" autocomplete="off"></label>
+          <label>비밀번호<input id="cfgPw" type="password" autocomplete="off"></label>
+        </div>
+        <button id="btnCfgSend" class="ghost">장치로 전송 (연결 후)</button>
+        <p class="hint">값에 쉼표(,)는 쓸 수 없습니다. 비밀번호는 이 폰 브라우저와 ESP32 저장소에 평문으로 보관됩니다.</p></details>
+    </div>
+    <div id="serialBox" hidden>
+      <div class="row gap"><label>보레이트<select id="baud"><option>115200</option><option>9600</option><option>38400</option><option>230400</option><option>460800</option></select></label>
+        <button id="btnSerial" class="primary">연결</button></div>
+      <button id="btnUm982" class="ghost sm">UM982 GGA/GST 1Hz 출력 명령 전송</button>
+      <p class="hint">시리얼 직결은 <b>보정 정보(RTCM)가 수신기로 들어가는 구성</b>일 때만 RTK가 됩니다. 브라우저는 NTRIP(TCP)에 직접 접속할 수 없어, 지금은 “폰 GPS” 경로를 권장합니다.</p>
+    </div>
+    <p id="srcHelp" class="hint"></p>
+    <div id="srcStatus" class="hint"></div>
+  </div>
+
+  <div class="card">
+    <h3>측량 조건</h3>
+    <div class="form">
+      <label>좌표계<select id="crs"></select></label>
+      <label>안테나 높이 (m)<input id="antH" type="number" step="0.001" inputmode="decimal"></label>
+      <label>평균 시간 (초)<input id="avgSec" type="number" step="1" min="1" inputmode="numeric"></label>
+      <label>허용 오차 (m)<input id="tol" type="number" step="0.005" min="0" inputmode="decimal"></label>
+      <label class="chk"><input id="reqFix" type="checkbox"> FIXED일 때만 측량 허용</label>
+    </div>
+    <p class="hint">지반고 = (GGA 고도 − 안테나 높이) + 현장 보정 Z. 안테나 높이는 <b>지면 → 안테나 위상중심</b>까지 (폴 길이 + 마운트 + 위상중심 오프셋).</p>
+  </div>
+
+  <div class="card">
+    <h3>폴 기울기 보정 (IMU)</h3>
+    <div class="form">
+      <label class="chk"><input id="tiltOn" type="checkbox"> 기울기 보정 사용 (IMU 필요)</label>
+      <label>자북 편차 (°, 동쪽 +)<input id="tiltDecl" type="number" step="0.1" inputmode="decimal"></label>
+      <label>최대 허용 기울기 (°)<input id="tiltMax" type="number" step="0.5" min="0.5" inputmode="decimal"></label>
+      <label>IMU 소스<select id="tiltSrc"><option value="phone">폰 내장 센서 (폴에 고정)</option><option value="ext">외부 IMU (ESP32/BNO085)</option></select></label>
+      <label>외부 IMU 세계 프레임<select id="tiltFrame"><option value="ENU">ENU (기본)</option><option value="NED">NED</option></select></label>
+    </div>
+    <div id="tiltLive" class="hint"></div>
+    <div class="row gap"><button id="tiltLevel" class="ghost">① 수평 캘리브레이션</button><button id="tiltYaw" class="ghost">② 방위 캘리브레이션</button></div>
+    <p class="hint">① 폴을 <b>버블 수평</b>으로 세우고 누르기(3초, 폴 축 학습 — IMU 장착 방향 무관). ② 폴 끝을 고정하고 <b>관 진행방향(시점→종점)으로 5~10° 기울인 채</b> 누르기(방위 오프셋). 자력이 불량하면 수평 보정만 하고, 기울기를 허용오차 안으로 제한합니다.</p>
+  </div>
+
+  <div class="card" id="logCard">
+    <h3>수신 기록 · 데이터 수집</h3>
+    <p class="hint">다중경로·신뢰도 모델 학습용 데이터입니다. <b>측정 특징</b>은 측정 확정 때마다 자동 저장되고, <b>연속 기록</b>은 켜 둔 동안 NMEA·에포크·위성(1Hz)을 저장합니다. 위성 정보(GSV/GSA)는 USB 시리얼·BLE 소스에서 들어옵니다.</p>
+    <div class="form">
+      <label>현장 유형<select id="logEnv"><option>개활지</option><option>가로수 아래</option><option>건물 한쪽 옆</option><option>좁은 골목(양쪽)</option><option>고층 건물 사이</option><option>차폐 심함/기타</option></select></label>
+      <label>메모<input id="logNote" placeholder="날씨·위치 등" autocomplete="off"></label>
+    </div>
+    <div class="row gap" style="margin-top:8px"><button id="logToggle" class="primary">● 연속 기록 시작</button></div>
+    <div id="logStat" class="hint"></div>
+    <canvas id="skyPlot" class="skyPlot" aria-label="위성 스카이 플롯"></canvas>
+    <div id="skyInfo" class="hint"></div>
+    <h4>정답점 측정 (학습용 정답 데이터)</h4>
+    <div class="row gap"><select id="gtKnown" aria-label="정답점"></select><button id="gtMeasure" class="primary sm">정답 측정</button></div>
+    <p class="hint">좌표를 아는 점(기지점·맨홀)에서 측정하면 <b>오차가 정답 라벨로 기록</b>됩니다. 모델 학습에는 이 정답 데이터가 가장 중요합니다. (현장 보정을 적용했으면 보정 후/전 오차를 모두 기록)</p>
+    <h4>내보내기</h4>
+    <div class="row gap"><button id="xShotCsv" class="ghost">측정 특징 CSV</button><button id="xShotClear" class="ghost danger">특징 삭제</button></div>
+    <div id="logList" class="list" style="margin-top:8px"></div>
+    <div id="logStorage" class="hint"></div>
+  </div>
+
+  <div class="card">
+    <h3>현장 보정 (기지점)</h3>
+    <p class="hint">기지점(맨홀·BM)에 폴을 세우고, 아래에서 그 점을 고른 뒤 “이 위치로 보정”. 1점=평행이동+높이, 2점 이상=회전 포함. 수신기 지오이드(EGM)와 국가 지오이드의 차이도 이 높이 보정으로 흡수됩니다.</p>
+    <div class="row gap"><select id="calKnown" aria-label="기지점"></select><button id="calAdd" class="primary sm">이 위치로 보정</button></div>
+    <input id="calZ" type="number" step="0.001" inputmode="decimal" placeholder="기지 표고 Z (선택, m) — 비우면 수평만 보정">
+    <div id="calInfo" class="hint"></div>
+    <button id="calReset" class="ghost sm">보정 초기화</button>
+  </div>
+
+  <div class="card" id="ttsCard">
+    <h3>안내 음성 (선택)</h3>
+    <p class="hint">기본은 폰 내장 음성입니다. ElevenLabs를 쓰면 자연스러운 한국어 음성이 나옵니다. 한 번 만든 문구는 <b>이 폰에 저장</b>되어 다시 쓸 때 무료·즉시·오프라인으로 재생되고, 만들지 못하면 기본 음성으로 대체됩니다. 전송 내용은 <b>안내 문구 글자</b>뿐입니다.</p>
+    <div class="form">
+      <label>음성 엔진<select id="ttsEngine"><option value="browser">폰 기본 음성</option><option value="eleven">ElevenLabs</option></select></label>
+      <label>모델<select id="ttsModel"><option value="eleven_flash_v2_5">Flash v2.5 (빠름·크레딧 절반)</option><option value="eleven_multilingual_v2">Multilingual v2 (품질↑·크레딧 2배)</option></select></label>
+      <label style="grid-column:1/-1">API 키<input id="ttsKey" type="password" autocomplete="off" placeholder="ElevenLabs API 키"></label>
+      <label>목소리<select id="ttsVoice"><option value="">(목소리 불러오기를 누르세요)</option></select></label>
+      <label>또는 목소리 ID 직접 입력<input id="ttsVoiceId" placeholder="voice_id"></label>
+    </div>
+    <div class="row gap" style="margin-top:8px"><button id="ttsLoad" class="ghost">목소리 불러오기</button><button id="ttsTest" class="ghost">시험 재생</button><button id="ttsPre" class="ghost">자주 쓰는 안내 미리 만들기</button><button id="ttsClear" class="ghost">저장된 음성 지우기</button></div>
+    <div id="ttsStat" class="hint"></div>
+    <p class="hint">⚠ 키는 <b>이 폰 브라우저에만 평문 저장</b>되며 백업 파일에는 포함되지 않습니다. 무료 플랜은 월 크레딧이 적고(Flash 모델 기준 글자당 0.5), 라이브러리 목소리는 API에서 막힐 수 있습니다 — 그때는 기본 제공 목소리를 고르세요. 판매용은 상업 이용 조건 확인과 중계 서버가 필요합니다.</p>
+  </div>
+
+  <div class="card" id="llmCard">
+    <h3>AI 보조 해석 (선택)</h3>
+    <p class="hint">음성·문자 명령은 <b>기본적으로 이 기기에서 오프라인</b>으로 해석됩니다. 이를 켜면 규칙이 못 알아들은 말만 Anthropic API(Claude)로 보내 해석합니다. 전송 내용: <b>발화 + 점·선형 이름 목록 + 현재 모드</b>(좌표·측정값은 보내지 않음). 해석 결과는 항상 확인·실행취소 경로를 거칩니다.</p>
+    <label class="chk2"><input type="checkbox" id="llmOn"> AI 보조 해석 사용</label>
+    <div class="form">
+      <label>API 키<input id="llmKey" type="password" autocomplete="off" placeholder="sk-ant-…"></label>
+      <label>모델<input id="llmModel" list="llmModels" placeholder="claude-opus-5-5"><datalist id="llmModels"><option value="claude-opus-5-5"><option value="claude-sonnet-5-5"><option value="claude-haiku-4-5"></datalist></label>
+      <label style="grid-column:1/-1">API 주소 (중계 서버 사용 시 변경)<input id="llmUrl" placeholder="https://api.anthropic.com"></label>
+    </div>
+    <div class="row gap" style="margin-top:8px"><button id="llmTest" class="ghost">연결 시험</button></div>
+    <div id="llmStat" class="hint"></div>
+    <p class="hint">⚠ 키는 <b>이 폰 브라우저에만 평문 저장</b>됩니다(개인 시험용). 백업 파일에는 포함되지 않습니다. 판매용 앱은 키를 폰에 두지 않고 <b>중계 서버</b>를 거치도록 해야 합니다. 응답이 느리면 모델을 가벼운 것으로 바꾸세요.</p>
+  </div>
+
+  <div class="card">
+    <h3>데이터</h3>
+    <div class="row gap"><button id="dBackup" class="ghost">백업(JSON)</button><label class="btn ghost">복원<input id="dRestore" type="file" accept=".json" hidden></label></div>
+    <button id="dReset" class="ghost danger">전체 초기화</button>
+    <p class="hint" id="verLbl"></p>
+  </div>
+</section>
+</main>
+
+<div id="sampling" class="sampling" hidden>
+  <div class="sbar"><i id="sFill"></i></div>
+  <div class="srow"><span id="sTxt">측정 중…</span><button id="sCancel" class="ghost sm">취소</button></div>
+</div>
+<div id="toast" class="toast" hidden></div>
+<div id="undoBar" class="undoBar" hidden><span id="undoTxt"></span><button id="undoGo">↶ 실행 취소</button></div>
+
+<button id="micBtn" class="mic" aria-label="음성 명령">🎤</button>
+<div id="vsheet" class="vsheet" hidden>
+  <div class="vtop"><b>음성 · 자연어 명령</b><label class="chk2"><input type="checkbox" id="vGuide"> 음성 안내</label><button id="vClose" class="ghost sm" aria-label="닫기">✕</button></div>
+  <div id="vTranscript" class="vt">말하거나 아래에 입력하세요</div>
+  <div id="vInterp" class="vi2"></div>
+  <div id="vConfirm" class="row gap" hidden><button id="vYes" class="primary">실행</button><button id="vNo" class="ghost">취소</button></div>
+  <div class="row gap"><input id="vText" placeholder="예: P1 찾아줘 / 다음 측점 / 확정" autocomplete="off" aria-label="명령 입력"><button id="vSend" class="ghost">전송</button><button id="vMic" class="primary" aria-label="음성 인식">🎤</button></div>
+  <div id="vHist" class="vhist"></div>
+</div>
+
+<nav id="tabs">
+  <button data-go="stake" class="on"><i>🎯</i>찾기</button>
+  <button data-go="survey"><i>📍</i>측량</button>
+  <button data-go="map"><i>🗺️</i>도면</button>
+  <button data-go="segs"><i>📏</i>선형</button>
+  <button data-go="settings"><i>⚙️</i>설정</button>
+</nav>
+
+<div id="printArea"></div>
+<script src="core.js?v=6"></script>
+<script src="dxf.js?v=6"></script>
+<script src="nlu.js?v=7"></script>
+<script src="app.js?v=7"></script>
+</body>
+</html>

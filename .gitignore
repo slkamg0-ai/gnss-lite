@@ -1,0 +1,4 @@
+node_modules/
+firmware/.pio/
+*.log
+dist/
