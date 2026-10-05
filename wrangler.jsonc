@@ -1,0 +1,8 @@
+{
+  // Cloudflare Workers 정적 배포 설정. 빌드 명령(npm run build:site)이 dist/ 를 만들고, 이 설정이 dist/ 를 gnss-lite-field 사이트로 올린다.
+  "name": "gnss-lite-field",
+  "compatibility_date": "2025-10-01",
+  "assets": {
+    "directory": "./dist"
+  }
+}
