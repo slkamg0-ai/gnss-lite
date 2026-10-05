@@ -9,7 +9,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon-192.png">
-<link rel="stylesheet" href="style.css?v=6">
+<link rel="stylesheet" href="style.css?v=9">
 </head>
 <body>
 <header id="top">
@@ -18,7 +18,7 @@
     <button id="fixBadge" class="badge none" data-go="settings" aria-label="수신 상태 (설정으로)">NO FIX</button>
     <div class="kv"><small>위성</small><b id="vSats">–</b></div>
     <div class="kv"><small>기울기</small><b id="vTilt">–</b></div>
-    <div class="kv"><small>정밀도 H / V</small><b id="vAcc">–</b></div>
+    <div class="kv"><small>정밀도 H/V cm</small><b id="vAcc">–</b></div>
     <div class="kv"><small>소스</small><b id="vSrc">–</b></div>
   </div>
   <div class="row2">
@@ -222,6 +222,7 @@
       <label>메모<input id="logNote" placeholder="날씨·위치 등" autocomplete="off"></label>
     </div>
     <div class="row gap" style="margin-top:8px"><button id="logToggle" class="primary">● 연속 기록 시작</button></div>
+    <div class="row gap" style="margin-top:8px"><div id="fixStat" class="hint" style="flex:1;margin:0"></div><button id="fsReset" class="ghost sm">통계 초기화</button></div>
     <div id="logStat" class="hint"></div>
     <canvas id="skyPlot" class="skyPlot" aria-label="위성 스카이 플롯"></canvas>
     <div id="skyInfo" class="hint"></div>
@@ -310,6 +311,6 @@
 <script src="core.js?v=6"></script>
 <script src="dxf.js?v=6"></script>
 <script src="nlu.js?v=7"></script>
-<script src="app.js?v=7"></script>
+<script src="app.js?v=10"></script>
 </body>
 </html>

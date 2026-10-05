@@ -27,12 +27,14 @@ small{color:var(--mut);font-weight:500}
 #top .row1,#top .row2{display:flex;gap:10px;align-items:center}
 #top .row2{margin-top:4px}
 #top .kv{flex:1;min-width:0}
-#top .row1 .kv:nth-child(2){flex:0 0 40px}#top .row1 .kv:nth-child(3){flex:0 0 54px}#top .row1 .kv:nth-child(4){flex:1.7}#top .row1 .kv:nth-child(5){flex:.9}
-#top .kv{padding-right:6px}
+#top .row1 .kv:nth-child(2){flex:0 0 36px}#top .row1 .kv:nth-child(3){flex:0 0 48px}#top .row1 .kv:nth-child(4){flex:1 1 auto}#top .row1 .kv:nth-child(5){flex:0 0 auto}
+.tHead span,#fixStat{word-break:keep-all}
+#top .row1{gap:6px}#top .row1 small{white-space:nowrap}
+#top .kv{padding-right:4px}
 #top .row1 .kv b{font-size:.92rem}
 #top .kv b{font-size:1rem;font-variant-numeric:tabular-nums;white-space:nowrap}
 #top .row2 .kv b{font-size:1.12rem}
-.badge{min-height:40px;min-width:92px;padding:0 10px;font-size:.95rem;letter-spacing:.02em;border-radius:10px}
+.badge{min-height:40px;min-width:72px;padding:0 8px;font-size:.95rem;letter-spacing:.02em;border-radius:10px}
 .badge.fixed{background:#16a34a}.badge.float{background:#d97706}.badge.dgps,.badge.single{background:#b45309}.badge.none{background:#7f1d1d}
 .warn{margin-top:6px;background:#fef3c7;color:#78350f;border-radius:8px;padding:6px 10px;font-size:.85rem;font-weight:700}
 
@@ -162,7 +164,7 @@ summary{font-weight:700;min-height:32px}
 .skyPlot{width:100%;aspect-ratio:1/1;max-height:300px;display:block;margin:8px auto;background:#fbfdfc;border-radius:12px;border:1px solid var(--line)}
 .lbtn{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end;max-width:58%}.lbtn .sm{min-height:34px;padding:0 8px;font-size:.78rem}
 #logList .it{flex-wrap:wrap}
-#top .row1{padding-right:58px}
+#top .row1{padding-right:50px}
 
 /* 음성 · 자연어 명령 */
 .mic{position:fixed;right:14px;bottom:calc(86px + env(safe-area-inset-bottom));width:56px;height:56px;min-height:56px;border-radius:50%;padding:0;font-size:1.5rem;background:#0b3d2e;color:#fff;box-shadow:0 4px 14px #0006;z-index:35}

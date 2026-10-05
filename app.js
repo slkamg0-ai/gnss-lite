@@ -17,7 +17,7 @@ function load() {
   try { const j = JSON.parse(localStorage.getItem(KEY)); if (j && j.v === 1) { const d = defState(); return Object.assign(d, j, { settings: Object.assign(d.settings, j.settings) }); } } catch (e) {}
   return defState();
 }
-function save() { trackUndo(); try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} }
+function save() { trackUndo(); try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { if (!save.warned) { save.warned = true; try { toast('⚠ 저장 실패 — 저장공간을 확인하고 지금 백업하세요'); } catch (x) {} } } }
 
 // ───────────── 실행 취소 ─────────────
 // 모든 변경은 save() 를 거치므로, 저장 시점마다 “데이터 부분”(점·선형·측정결과·면적)이 바뀌었는지 비교해 이전 상태를 스택에 쌓는다.
@@ -85,9 +85,28 @@ function computeRaw(p, alt) {
   // 자력 불량: 방위를 믿을 수 없으므로 수평 보정은 하지 않고(높이만 보정), 기울기를 허용오차 안으로 제한
   return { raw: { n: magOk ? c.n : p.n, e: magOk ? c.e : p.e, z: c.z }, tilt: { theta: ti.theta, az: ti.az, lim, magOk, ok: ti.theta <= lim, dh: c.dh } };
 }
+// 시험용 Fix 통계(소스 연결 후): 첫 FIXED까지 시간, 등급별 비율, FIXED 이탈·재획득, 수신 끊김(3초 이상 무수신)
+const FS = { t0: null, first: null, n: 0, c: {}, lastT: 0, gaps: 0, lost: null, reacq: [], drops: 0 };
+function fsReset() { Object.assign(FS, { t0: null, first: null, n: 0, c: {}, lastT: 0, gaps: 0, lost: null, reacq: [], drops: 0 }); }
+function fsFeed(fix, now) {
+  if (FS.t0 == null) FS.t0 = now;
+  if (FS.lastT && now - FS.lastT > 3000) FS.gaps++;
+  FS.lastT = now; FS.n++; FS.c[fix] = (FS.c[fix] || 0) + 1;
+  const fx = fix === 'FIXED';
+  if (fx && FS.first == null) FS.first = (now - FS.t0) / 1000;
+  if (!fx && FS.first != null && FS.lost == null) { FS.lost = now; FS.drops++; }
+  if (fx && FS.lost != null) { FS.reacq.push((now - FS.lost) / 1000); FS.lost = null; }
+}
+function fsText() {
+  if (!FS.n) return '통계 없음 — 위치 수신 전';
+  const c = FS.c, pct = v => (100 * (v || 0) / FS.n).toFixed(0), el = (Date.now() - FS.t0) / 1000, mm = Math.floor(el / 60), ss = String(Math.floor(el % 60)).padStart(2, '0');
+  const ra = FS.reacq.length ? ` (재획득 평균 ${(FS.reacq.reduce((a, b) => a + b, 0) / FS.reacq.length).toFixed(0)}초)` : '';
+  return `연결 후 ${mm}:${ss} · 첫 FIXED ${FS.first == null ? '아직' : FS.first.toFixed(0) + '초'} · FIXED ${pct(c.FIXED)}% · FLOAT ${pct(c.FLOAT)}% · 기타 ${pct(FS.n - (c.FIXED || 0) - (c.FLOAT || 0))}% · FIXED 이탈 ${FS.drops}회${ra} · 수신 끊김 ${FS.gaps}회`;
+}
 function onEpoch(ep) {
   const p = GL.toProjected(S.settings.crs, ep.lat, ep.lon), r = computeRaw(p, ep.alt == null ? NaN : ep.alt);
   L = Object.assign({}, ep, { raw: r.raw, tilt: r.tilt, site: GL.applyCalibration(CAL, r.raw), t: Date.now() });
+  fsFeed(ep.fix, L.t);
   logEpoch(L);
   if (sampler) feedSampler();
   dirty = true;
@@ -213,7 +232,7 @@ async function sendBridgeCfg() {
   } catch (e) { toast(e.message); }
 }
 
-function stopSource() { simStop(); geoStop(); if (port) serialDisconnect(); if (bleDev && bleDev.gatt.connected) bleDev.gatt.disconnect(); IMU = null; L = null; }
+function stopSource() { simStop(); geoStop(); if (port) serialDisconnect(); if (bleDev && bleDev.gatt.connected) bleDev.gatt.disconnect(); IMU = null; L = null; fsReset(); }
 function startSource() {
   stopSource();
   const s = S.settings.source;
@@ -317,7 +336,7 @@ function updateTop() {
   vt.textContent = !S.settings.tilt.on ? 'OFF' : !tl ? '–' : tl.missing ? '?' : tl.theta.toFixed(1) + '°';
   vt.className = tl && !tl.missing ? (!tl.ok ? 'tbad' : tl.theta > tl.lim * 0.7 ? 'tw' : '') : (S.settings.tilt.on ? 'tbad' : '');
   if (tab === 'settings') updateTiltLive();
-  $('#vAcc').textContent = L && L.sdH != null ? `${(L.sdH * 100).toFixed(1)}/${L.sdV != null ? (L.sdV * 100).toFixed(1) : '–'}cm` : '–';
+  $('#vAcc').textContent = L && L.sdH != null ? `${(L.sdH * 100).toFixed(1)}/${L.sdV != null ? (L.sdV * 100).toFixed(1) : '–'}` : '–';
   $('#vSrc').textContent = { sim: '데모', geo: '폰 GPS', serial: '시리얼' }[S.settings.source];
   $('#vN').textContent = L ? f3(L.site.n) : '–'; $('#vE').textContent = L ? f3(L.site.e) : '–'; $('#vZ').textContent = L ? f3(L.site.z) : '–';
   let w = '';
@@ -978,6 +997,7 @@ function drawSky() {
   const f = skyFeatures(sk); info.textContent = `가시 ${f.nVis} · 사용 ${f.nUsed} · 평균 C/N0 ${f.cn0Used != null ? f.cn0Used.toFixed(1) : '–'} dB-Hz · 저고도(<15°) 사용 ${f.nLowEl} · 약신호(<35) ${f.nWeak}${f.pdop != null ? ' · PDOP ' + f.pdop : ''}  (녹색 ≥40 / 황색 ≥32 / 적색 <32, 큰 점=사용 위성)`;
 }
 function renderLogLive() {
+  const fe = $('#fixStat'); if (fe) fe.textContent = fsText();
   const el = $('#logStat'); if (!el) return; const en = logEntry();
   el.textContent = en ? `● 기록 중 — NMEA ${en.n.nmea + LOG.buf.nmea.length} · 에포크 ${en.n.epoch + LOG.buf.epoch.length} · 위성 ${en.n.sky + LOG.buf.sky.length}` : `기록 중지 · 측정 특징 ${SHOTLOG.length}건 누적`;
   if (tab === 'settings') drawSky();
@@ -1313,8 +1333,10 @@ document.addEventListener('visibilitychange', async () => { try { if (document.v
 try { navigator.wakeLock && navigator.wakeLock.request('screen').catch(() => {}); } catch (e) {}
 if ('serviceWorker' in navigator && /^https?:/.test(location.protocol)) navigator.serviceWorker.register('sw.js').catch(() => {});
 
-window.__gl = { say, ttsSpeak, ttsClip, ttsKey, handleUtterance, execute, ACTIONS, CMDLOG: () => CMDLOG, nluCtx, PENDING: () => PENDING, logStart, logStop, logFlush, logExport, logRead, SKY, skySnapshot, skyFeatures, logShot, shotCsv, SHOTLOG: () => SHOTLOG, LOGSID: () => LOG.sid, undo, UNDO, V, PICK: () => PICK, simTick, DXFD: () => DXFD, areaStats, findCsv, areaCsv, curTarget, stas, kindOf, shotKey, pickAt, showPick, render, IMU: () => IMU, levelCal, yawCal, computeRaw, S: () => S, L: () => L, SIM, sample, onEpoch, go, buildPrint, buildDxf, sheetCsv, pointsCsv, CAL: () => CAL, handleNmea };
+$('#fsReset').onclick = () => { fsReset(); dirty = true; };
+window.__gl = { FS, fsFeed, fsText, fsReset, say, ttsSpeak, ttsClip, ttsKey, handleUtterance, execute, ACTIONS, CMDLOG: () => CMDLOG, nluCtx, PENDING: () => PENDING, logStart, logStop, logFlush, logExport, logRead, SKY, skySnapshot, skyFeatures, logShot, shotCsv, SHOTLOG: () => SHOTLOG, LOGSID: () => LOG.sid, undo, UNDO, V, PICK: () => PICK, simTick, DXFD: () => DXFD, areaStats, findCsv, areaCsv, curTarget, stas, kindOf, shotKey, pickAt, showPick, render, IMU: () => IMU, levelCal, yawCal, computeRaw, S: () => S, L: () => L, SIM, sample, onEpoch, go, buildPrint, buildDxf, sheetCsv, pointsCsv, CAL: () => CAL, handleNmea };
 idb.get('dxf').then(d => { if (d && S.dxf && S.dxf.name) { DXFD = d; dirty = true; renderLayers(); dxfInfoUpdate(); } }).catch(() => {});
+try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}   // 저장공간 부족 시 브라우저가 앱 데이터를 지우지 않도록 요청(설치된 앱은 보통 허용)
 startSource(); buildStake(); renderAreas(); requestAnimationFrame(frame);
 loadShotLog(); lastSig = dataSig(); refreshUndoBtn(); $('#undoGo').onclick = undo; $('#undoBtn').onclick = undo;
 })();
