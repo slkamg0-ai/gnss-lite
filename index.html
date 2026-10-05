@@ -9,7 +9,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon-192.png">
-<link rel="stylesheet" href="style.css?v=9">
+<link rel="stylesheet" href="style.css?v=10">
 </head>
 <body>
 <header id="top">
@@ -294,6 +294,8 @@
   <div class="vtop"><b>음성 · 자연어 명령</b><label class="chk2"><input type="checkbox" id="vGuide"> 음성 안내</label><button id="vClose" class="ghost sm" aria-label="닫기">✕</button></div>
   <div id="vTranscript" class="vt">말하거나 아래에 입력하세요</div>
   <div id="vInterp" class="vi2"></div>
+  <div class="row gap" style="margin:6px 0"><label class="chk2"><input type="checkbox" id="vHF"> 핸즈프리 (호출어)</label><input id="vWake" style="flex:1;min-width:0" aria-label="호출어(쉼표로 여러 개)" autocomplete="off"></div>
+  <div id="vHFStat" class="hint"></div>
   <div id="vConfirm" class="row gap" hidden><button id="vYes" class="primary">실행</button><button id="vNo" class="ghost">취소</button></div>
   <div class="row gap"><input id="vText" placeholder="예: P1 찾아줘 / 다음 측점 / 확정" autocomplete="off" aria-label="명령 입력"><button id="vSend" class="ghost">전송</button><button id="vMic" class="primary" aria-label="음성 인식">🎤</button></div>
   <div id="vHist" class="vhist"></div>
@@ -311,6 +313,6 @@
 <script src="core.js?v=6"></script>
 <script src="dxf.js?v=6"></script>
 <script src="nlu.js?v=7"></script>
-<script src="app.js?v=10"></script>
+<script src="app.js?v=12"></script>
 </body>
 </html>

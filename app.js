@@ -1085,12 +1085,15 @@ $('#xPrint').onclick = () => { buildPrint(); setTimeout(() => window.print(), 10
 S.settings.voiceGuide = !!S.settings.voiceGuide; S.settings.llm = Object.assign({ on: false, endpoint: 'https://api.anthropic.com', model: 'claude-opus-5-5', key: '' }, S.settings.llm);
 S.settings.tts = Object.assign({ engine: 'browser', key: '', voice: '', voiceName: '', model: 'eleven_flash_v2_5', used: 0 }, S.settings.tts);
 if (/^claude-haiku-4-5-\d+$/.test(S.settings.llm.model)) S.settings.llm.model = 'claude-haiku-4-5';          // 모델 ID 에는 날짜 접미사를 붙이지 않는다
+S.settings.hf = Object.assign({ on: false, wake: '측량기, 측량기야, 측량이, 축량기' }, S.settings.hf);                           // 핸즈프리(호출어) 설정
 let PENDING = null, LASTVIA = 'text', CMDLOG = [], cmdSaveT = null, REC = null;
+const HF = { run: false, rec: null, armed: 0, speakUntil: 0, fails: 0, heard: 0, wake: 0, ignored: 0, timer: null, ctx: null };   // 핸즈프리 상태
 const VG = { t: 0, last: '', arrived: false };
 const gv = id => document.getElementById(id);
 const nluCtx = () => ({ segs: S.segs.map(s => ({ id: s.id, name: s.name })), points: S.points.map(p => ({ id: p.id, name: p.name })) });
 function say(msg, o) {
   gv('vInterp').textContent = msg;
+  if (HF.run) HF.speakUntil = Date.now() + 600 + 130 * msg.length + (S.settings.tts.engine === 'eleven' ? 1200 : 0);   // 자기 안내 음성을 마이크가 다시 듣지 않게 그동안 무시
   if (!(o && o.force) && LASTVIA !== 'voice' && !S.settings.voiceGuide) return;
   const T = S.settings.tts;
   if (T.engine === 'eleven' && T.key && T.voice) { ttsSpeak(msg, o).catch(() => browserSpeak(msg, o)); return; }   // 캐시에 있으면 오프라인에서도 재생, 생성 실패·미캐시 오프라인이면 기본 음성
@@ -1253,7 +1256,62 @@ function voiceGuide(g, t, tol) {
 
 // 음성 인식 (Web Speech API — Android Chrome. 오디오는 브라우저 제공 서비스로 전송됨)
 function setMic(on) { gv('micBtn').classList.toggle('on', on); gv('vMic').textContent = on ? '■' : '🎤'; }
+// ── 핸즈프리(호출어) 모드 [실험]: 상시 듣기 + 호출어("측량기") 뒤의 말만 명령으로 처리. 호출어 없이 들린 말은 버린다(확인 대기 중의 예/아니오만 예외).
+// Web Speech API 상시 인식이라 안드로이드 Chrome 에서는 인식이 수시로 끊겨 다시 시작하고 시작음이 날 수 있다. 화면이 켜진 앱 전면에서만 동작하며 오디오는 클라우드로 전송된다.
+const HF_PUNCT = /[\s.,!?·~"'“”‘’]/;
+const hfNorm = s => s.split('').filter(c => !HF_PUNCT.test(c)).join('');
+function lev(a, b) { const d = Array.from({ length: a.length + 1 }, (_, i) => [i]); for (let j = 1; j <= b.length; j++) d[0][j] = j; for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)); return d[a.length][b.length]; }
+function hfFindWake(s) {                                     // 호출어가 들어 있으면 {rest: 호출어 뒤 문장}, 없으면 null
+  const n = hfNorm(s); let best = null;
+  for (const w0 of S.settings.hf.wake.split(',')) {
+    const w = hfNorm(w0); if (!w) continue; let idx = n.indexOf(w), end = idx + w.length;
+    if (idx < 0 && w.length >= 4) { for (let i = 0; i + w.length - 1 <= n.length && idx < 0; i++) for (const L of [w.length - 1, w.length, w.length + 1]) { if (i + L <= n.length && lev(n.slice(i, i + L), w) <= 1) { idx = i; end = i + L; break; } } }   // 4글자 이상이면 한 글자 오인식 허용
+    if (idx >= 0 && (!best || idx < best.idx || (idx === best.idx && end > best.end))) best = { idx, end };     // 같은 위치면 더 긴 호출어("측량기야")를 우선
+  }
+  if (!best) return null;
+  let cnt = 0, pos = 0; for (; pos < s.length && cnt < best.end; pos++) if (!HF_PUNCT.test(s[pos])) cnt++;     // 정규화 위치 → 원문 위치
+  return { rest: s.slice(pos).replace(/^[\s,.!?]+/, '').trim() };
+}
+function hfBeep(f, ms) { try { HF.ctx = HF.ctx || new (window.AudioContext || window.webkitAudioContext)(); if (HF.ctx.state === 'suspended') HF.ctx.resume(); const o = HF.ctx.createOscillator(), g = HF.ctx.createGain(); o.frequency.value = f; g.gain.value = 0.08; o.connect(g); g.connect(HF.ctx.destination); o.start(); o.stop(HF.ctx.currentTime + ms / 1000); } catch (e) {} }
+function hfUi() {
+  gv('micBtn').classList.toggle('hf', HF.run); gv('micBtn').classList.toggle('hfoff', S.settings.hf.on && !HF.run);
+  gv('vHF').checked = S.settings.hf.on; const w = S.settings.hf.wake.split(',')[0].trim();
+  gv('vHFStat').textContent = HF.run ? `● 핸즈프리 대기 — “${w}”라고 부른 뒤 명령 · 들은 말 ${HF.heard} · 호출 ${HF.wake} · 무시 ${HF.ignored}` : (S.settings.hf.on ? '핸즈프리가 꺼져 있습니다 — 🎤를 누르면 켜집니다' : '핸즈프리 꺼짐');
+}
+function hfOnFinal(alts) {
+  const now = Date.now(); HF.heard++;
+  if (now < HF.speakUntil) { HF.ignored++; return; }          // 자기 안내 음성
+  let w = null; for (const a of alts) { w = hfFindWake(a); if (w) break; }
+  if (w) {
+    HF.wake++; hfBeep(880, 110);
+    if (w.rest.length >= 2) { HF.armed = 0; gv('vTranscript').textContent = '“' + w.rest + '”'; handleUtterance(w.rest, 'voice'); }
+    else { HF.armed = now + 6000; gv('vTranscript').textContent = '듣는 중… 명령을 말하세요'; }     // 호출어만 말했으면 다음 한 마디를 명령으로
+    return;
+  }
+  if (HF.armed && now < HF.armed) { HF.armed = 0; const ok = alts.find(a => NLU.parseCommand(a, nluCtx()) || (PENDING && NLU.parseYesNo(a))); gv('vTranscript').textContent = '“' + (ok || alts[0]) + '”'; handleUtterance(ok || alts[0], 'voice'); return; }
+  if (PENDING) { const yn = alts.find(a => NLU.parseYesNo(a)); if (yn) { gv('vTranscript').textContent = '“' + yn + '”'; handleUtterance(yn, 'voice'); return; } }   // 확인 대기 중의 예/아니오는 호출어 없이 허용
+  HF.ignored++;
+}
+function hfSpawn(SR) {
+  if (!HF.run) return;
+  try {
+    const r = new SR(); r.lang = 'ko-KR'; r.continuous = true; r.interimResults = false; r.maxAlternatives = 3;
+    r.onresult = e => { HF.fails = 0; for (let i = e.resultIndex; i < e.results.length; i++) { const res = e.results[i]; if (!res.isFinal) continue; const alts = []; for (let k = 0; k < res.length; k++) alts.push(res[k].transcript.trim()); hfOnFinal(alts); } hfUi(); };
+    r.onerror = e => { if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { hfStop(true); toast('마이크 권한이 필요합니다 — 브라우저 사이트 설정에서 허용하세요'); } else if (e.error === 'audio-capture') { hfStop(true); toast('마이크를 사용할 수 없습니다'); } else if (e.error !== 'no-speech' && e.error !== 'aborted') HF.fails++; };
+    r.onend = () => { HF.rec = null; if (!HF.run || document.hidden) return; HF.timer = setTimeout(() => hfSpawn(SR), Math.min(10000, 250 * Math.pow(2, Math.min(HF.fails, 5)))); };     // 끊기면 다시 시작(연속 실패는 간격을 늘림)
+    HF.rec = r; r.start();
+  } catch (e) { HF.fails++; HF.timer = setTimeout(() => hfSpawn(SR), 1500); }
+}
+function hfStart() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { toast('이 브라우저는 음성 인식을 지원하지 않습니다'); return false; }
+  if (HF.run) return true;
+  HF.run = true; HF.fails = 0; hfSpawn(SR); hfUi(); return true;
+}
+function hfStop(off) { HF.run = false; clearTimeout(HF.timer); try { HF.rec && HF.rec.abort(); } catch (e) {} HF.rec = null; if (off) { S.settings.hf.on = false; save(); } hfUi(); }
+document.addEventListener('visibilitychange', () => { if (!document.hidden && HF.run && !HF.rec) { const SR = window.SpeechRecognition || window.webkitSpeechRecognition; if (SR) hfSpawn(SR); } });   // 앱이 다시 앞으로 오면 재개
 function startListen() {
+  if (HF.run) { HF.armed = Date.now() + 6000; hfBeep(880, 110); gv('vTranscript').textContent = '듣는 중… 명령을 말하세요'; return; }      // 핸즈프리 중에는 새 인식기를 만들지 않고 "지금 말하기"로 동작
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) { toast('이 브라우저는 음성 인식을 지원하지 않습니다 — 아래에 입력하세요'); return; }
   if (REC) { try { REC.stop(); } catch (e) {} return; }
@@ -1268,7 +1326,13 @@ function startListen() {
   } catch (e) { REC = null; toast('음성 인식을 시작할 수 없습니다: ' + e.message); }
 }
 function openSheet(listen) { gv('vsheet').hidden = false; gv('vGuide').checked = S.settings.voiceGuide; if (listen) startListen(); }
-gv('micBtn').onclick = () => { if (gv('vsheet').hidden) openSheet(true); else if (REC) startListen(); else openSheet(true); };
+gv('micBtn').onclick = () => {
+  if (S.settings.hf.on && !HF.run) { hfBeep(660, 80); hfStart(); gv('vsheet').hidden = false; return; }      // 핸즈프리를 켜 둔 상태에서 앱을 다시 열면 🎤 한 번으로 재개(브라우저 정책상 사용자 터치 필요)
+  if (gv('vsheet').hidden) openSheet(!HF.run); else if (REC) startListen(); else openSheet(!HF.run);
+};
+gv('vHF').onchange = e => { S.settings.hf.on = e.target.checked; save(); if (e.target.checked) { hfBeep(660, 80); hfStart(); } else hfStop(false); hfUi(); };
+gv('vWake').value = S.settings.hf.wake; gv('vWake').onchange = e => { S.settings.hf.wake = e.target.value.trim() || '측량기, 측량기야, 측량이, 축량기'; e.target.value = S.settings.hf.wake; save(); hfUi(); };
+hfUi();
 gv('vClose').onclick = () => { gv('vsheet').hidden = true; if (REC) { try { REC.stop(); } catch (e) {} } hideConfirm(); };
 gv('vMic').onclick = startListen;
 gv('vSend').onclick = () => { const v = gv('vText').value; gv('vText').value = ''; handleUtterance(v, 'text'); };
@@ -1334,7 +1398,7 @@ try { navigator.wakeLock && navigator.wakeLock.request('screen').catch(() => {})
 if ('serviceWorker' in navigator && /^https?:/.test(location.protocol)) navigator.serviceWorker.register('sw.js').catch(() => {});
 
 $('#fsReset').onclick = () => { fsReset(); dirty = true; };
-window.__gl = { FS, fsFeed, fsText, fsReset, say, ttsSpeak, ttsClip, ttsKey, handleUtterance, execute, ACTIONS, CMDLOG: () => CMDLOG, nluCtx, PENDING: () => PENDING, logStart, logStop, logFlush, logExport, logRead, SKY, skySnapshot, skyFeatures, logShot, shotCsv, SHOTLOG: () => SHOTLOG, LOGSID: () => LOG.sid, undo, UNDO, V, PICK: () => PICK, simTick, DXFD: () => DXFD, areaStats, findCsv, areaCsv, curTarget, stas, kindOf, shotKey, pickAt, showPick, render, IMU: () => IMU, levelCal, yawCal, computeRaw, S: () => S, L: () => L, SIM, sample, onEpoch, go, buildPrint, buildDxf, sheetCsv, pointsCsv, CAL: () => CAL, handleNmea };
+window.__gl = { HF, hfOnFinal, hfFindWake, hfStart, hfStop, FS, fsFeed, fsText, fsReset, say, ttsSpeak, ttsClip, ttsKey, handleUtterance, execute, ACTIONS, CMDLOG: () => CMDLOG, nluCtx, PENDING: () => PENDING, logStart, logStop, logFlush, logExport, logRead, SKY, skySnapshot, skyFeatures, logShot, shotCsv, SHOTLOG: () => SHOTLOG, LOGSID: () => LOG.sid, undo, UNDO, V, PICK: () => PICK, simTick, DXFD: () => DXFD, areaStats, findCsv, areaCsv, curTarget, stas, kindOf, shotKey, pickAt, showPick, render, IMU: () => IMU, levelCal, yawCal, computeRaw, S: () => S, L: () => L, SIM, sample, onEpoch, go, buildPrint, buildDxf, sheetCsv, pointsCsv, CAL: () => CAL, handleNmea };
 idb.get('dxf').then(d => { if (d && S.dxf && S.dxf.name) { DXFD = d; dirty = true; renderLayers(); dxfInfoUpdate(); } }).catch(() => {});
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}   // 저장공간 부족 시 브라우저가 앱 데이터를 지우지 않도록 요청(설치된 앱은 보통 허용)
 startSource(); buildStake(); renderAreas(); requestAnimationFrame(frame);

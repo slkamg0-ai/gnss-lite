@@ -29,6 +29,9 @@ small{color:var(--mut);font-weight:500}
 #top .kv{flex:1;min-width:0}
 #top .row1 .kv:nth-child(2){flex:0 0 36px}#top .row1 .kv:nth-child(3){flex:0 0 48px}#top .row1 .kv:nth-child(4){flex:1 1 auto}#top .row1 .kv:nth-child(5){flex:0 0 auto}
 .tHead span,#fixStat{word-break:keep-all}
+.mic.hf{box-shadow:0 0 0 4px #22c55e99;animation:hfp 1.6s ease-in-out infinite}
+.mic.hfoff{box-shadow:0 0 0 4px #f59e0b99}
+@keyframes hfp{0%,100%{box-shadow:0 0 0 3px #22c55e99}50%{box-shadow:0 0 0 9px #22c55e22}}
 #top .row1{gap:6px}#top .row1 small{white-space:nowrap}
 #top .kv{padding-right:4px}
 #top .row1 .kv b{font-size:.92rem}
