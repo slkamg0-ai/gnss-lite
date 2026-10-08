@@ -103,10 +103,29 @@ function fsText() {
   const ra = FS.reacq.length ? ` (재획득 평균 ${(FS.reacq.reduce((a, b) => a + b, 0) / FS.reacq.length).toFixed(0)}초)` : '';
   return `연결 후 ${mm}:${ss} · 첫 FIXED ${FS.first == null ? '아직' : FS.first.toFixed(0) + '초'} · FIXED ${pct(c.FIXED)}% · FLOAT ${pct(c.FLOAT)}% · 기타 ${pct(FS.n - (c.FIXED || 0) - (c.FLOAT || 0))}% · FIXED 이탈 ${FS.drops}회${ra} · 수신 끊김 ${FS.gaps}회`;
 }
+// 수신 진단: 현장에서 막혔을 때 원인을 한 번에 보고할 수 있도록 최근 60초의 갱신 간격·정확도·Fix·고도 유무를 모은다(좌표는 저장하지 않음)
+const DG = { ep: [], lastSampErr: '', lastSampOk: '' };
+function dgFeed(ep, now) { DG.ep.push({ t: now, fix: ep.fix, sdH: ep.sdH, sdV: ep.sdV, alt: ep.alt != null && isFinite(ep.alt) }); const cut = now - 60000; while (DG.ep.length && DG.ep[0].t < cut) DG.ep.shift(); }
+function dgStats() {
+  const e = DG.ep; if (!e.length) return null;
+  const dts = []; for (let i = 1; i < e.length; i++) dts.push((e[i].t - e[i - 1].t) / 1000);
+  const mean = a => a.reduce((x, y) => x + y, 0) / a.length, sd = e.map(x => x.sdH).filter(v => v != null && isFinite(v));
+  return { n: e.length, hz: dts.length ? 1 / mean(dts) : null, dtMax: dts.length ? Math.max(...dts) : null, fixedPct: 100 * e.filter(x => x.fix === 'FIXED').length / e.length,
+    sdMin: sd.length ? Math.min(...sd) : null, sdMax: sd.length ? Math.max(...sd) : null, sdLast: sd.length ? sd[sd.length - 1] : null, altPct: 100 * e.filter(x => x.alt).length / e.length, ageLast: (Date.now() - e[e.length - 1].t) / 1000 };
+}
+function diagReport() {
+  const s = S.settings, d = dgStats(), w = $('#warn'), warn = w && !w.hidden ? w.textContent : '(경고 없음)';
+  const f = (v, k) => v == null || !isFinite(v) ? '–' : (+v).toFixed(k), cm = v => v == null ? '–' : (v * 100).toFixed(1);
+  return ['[간이측량기 진단] ' + new Date().toISOString(), 'GNSS-Lite v' + VER + ' · ' + location.host, 'UA: ' + navigator.userAgent,
+    `설정: 소스=${s.source} 좌표계=${s.crs} 안테나높이=${s.antH} 평균=${s.avgSec}s 허용오차=${s.tol} FIXED만측량=${s.reqFix} 기울기보정=${s.tilt.on}(${s.tilt.imuSrc})`,
+    '위치 소스 상태: ' + ($('#srcStatus') ? $('#srcStatus').textContent : '–'), '경고: ' + warn,
+    d ? `최근 60초: 갱신 ${d.n}회(${f(d.hz, 2)} Hz, 최대 간격 ${f(d.dtMax, 1)}s, 마지막 갱신 ${f(d.ageLast, 1)}s 전), FIXED ${f(d.fixedPct, 0)}%, 수평정확도 최소/최대/마지막 ${cm(d.sdMin)}/${cm(d.sdMax)}/${cm(d.sdLast)} cm, 고도 포함 ${f(d.altPct, 0)}%` : '최근 60초: 위치 수신 없음',
+    'Fix 통계: ' + fsText(), '마지막 측정: ' + (DG.lastSampErr ? '실패 — ' + DG.lastSampErr : DG.lastSampOk || '(없음)')].join('\n');
+}
 function onEpoch(ep) {
   const p = GL.toProjected(S.settings.crs, ep.lat, ep.lon), r = computeRaw(p, ep.alt == null ? NaN : ep.alt);
   L = Object.assign({}, ep, { raw: r.raw, tilt: r.tilt, site: GL.applyCalibration(CAL, r.raw), t: Date.now() });
-  fsFeed(ep.fix, L.t);
+  fsFeed(ep.fix, L.t); dgFeed(ep, L.t);
   logEpoch(L);
   if (sampler) feedSampler();
   dirty = true;
@@ -254,18 +273,25 @@ function sample(sec) {
     if (sampler) return reject(new Error('측정 중'));
     sampler = { sec, buf: [], tStart: 0, t0: Date.now(), resets: 0, resolve, reject };
     $('#sampling').hidden = false; $('#sFill').style.width = '0%'; $('#sTxt').textContent = '측정 준비…'; dirty = true;
-    sampler.guard = setInterval(() => { if (Date.now() - sampler.t0 > 60000) endSampler(new Error('60초 내 조건 미충족 (FIXED 유지 실패)')); }, 500);
+    sampler.guard = setInterval(() => {
+      const sp = sampler; if (!sp) return; const lag = L ? (Date.now() - L.t) / 1000 : 99;
+      if (lag > 2) $('#sTxt').textContent = `위치 갱신이 느림 (마지막 갱신 ${lag.toFixed(1)}초 전, n=${sp.buf.length})`;     // 갱신 자체가 멈춘 경우를 구분해서 보여 줌
+      if (Date.now() - sp.t0 > 60000) endSampler(new Error(`60초 내 조건 미충족 (n=${sp.buf.length}, 리셋 ${sp.resets}, 마지막 Fix ${L ? L.fix : '없음'}, 마지막 갱신 ${lag.toFixed(1)}초 전)`));
+    }, 500);
     feedSampler();
   });
 }
 function endSampler(err, res) {
   if (!sampler) return; const s = sampler; sampler = null; clearInterval(s.guard); $('#sampling').hidden = true;
+  if (err) DG.lastSampErr = err.message; else { DG.lastSampErr = ''; DG.lastSampOk = `성공 n=${res.count}, Fix ${res.fix}, 정밀도 ${(res.sdH * 100).toFixed(1)}/${(res.sdV * 100).toFixed(1)} cm`; }
   err ? s.reject(err) : s.resolve(res);
 }
 function feedSampler() {
   const s = sampler, ok = !S.settings.reqFix || L.fix === 'FIXED';
   const tl = L.tilt, tiltBad = tl && (tl.missing || !tl.ok);
-  if (!ok || !isFinite(L.site.z) || tiltBad) { if (s.buf.length) s.resets++; s.buf = []; s.tStart = 0;
+  if (!ok && s.buf.length && isFinite(L.site.z) && !tiltBad && (s.miss = (s.miss || 0) + 1) <= 2) return;   // 정확도 값이 출렁여 한두 번 FIXED가 풀려도 평균을 처음부터 다시 하지 않고 그 순간만 건너뜀
+  if (ok) s.miss = 0;
+  if (!ok || !isFinite(L.site.z) || tiltBad) { if (s.buf.length) s.resets++; s.buf = []; s.tStart = 0; s.miss = 0;
     $('#sTxt').textContent = !ok ? 'FIXED 대기… (' + L.fix + ')' : tiltBad ? (tl.missing ? tl.why : '기울기 ' + tl.theta.toFixed(1) + '° > 한계 ' + tl.lim.toFixed(1) + '° — 폴을 세우세요') : '고도값 없음'; $('#sFill').style.width = '0%'; return; }
   if (!s.tStart) s.tStart = Date.now();
   s.buf.push({ site: L.site, raw: L.raw, fix: L.fix, sats: L.sats, hdop: L.hdop, sdH: L.sdH, sdV: L.sdV, age: L.age, th: L.tilt && !L.tilt.missing ? L.tilt.theta : null });
@@ -998,6 +1024,7 @@ function drawSky() {
 }
 function renderLogLive() {
   const fe = $('#fixStat'); if (fe) fe.textContent = fsText();
+  const dt = $('#diagText'); if (dt) dt.textContent = diagReport();
   const el = $('#logStat'); if (!el) return; const en = logEntry();
   el.textContent = en ? `● 기록 중 — NMEA ${en.n.nmea + LOG.buf.nmea.length} · 에포크 ${en.n.epoch + LOG.buf.epoch.length} · 위성 ${en.n.sky + LOG.buf.sky.length}` : `기록 중지 · 측정 특징 ${SHOTLOG.length}건 누적`;
   if (tab === 'settings') drawSky();
@@ -1398,7 +1425,13 @@ try { navigator.wakeLock && navigator.wakeLock.request('screen').catch(() => {})
 if ('serviceWorker' in navigator && /^https?:/.test(location.protocol)) navigator.serviceWorker.register('sw.js').catch(() => {});
 
 $('#fsReset').onclick = () => { fsReset(); dirty = true; };
-window.__gl = { HF, hfOnFinal, hfFindWake, hfStart, hfStop, FS, fsFeed, fsText, fsReset, say, ttsSpeak, ttsClip, ttsKey, handleUtterance, execute, ACTIONS, CMDLOG: () => CMDLOG, nluCtx, PENDING: () => PENDING, logStart, logStop, logFlush, logExport, logRead, SKY, skySnapshot, skyFeatures, logShot, shotCsv, SHOTLOG: () => SHOTLOG, LOGSID: () => LOG.sid, undo, UNDO, V, PICK: () => PICK, simTick, DXFD: () => DXFD, areaStats, findCsv, areaCsv, curTarget, stas, kindOf, shotKey, pickAt, showPick, render, IMU: () => IMU, levelCal, yawCal, computeRaw, S: () => S, L: () => L, SIM, sample, onEpoch, go, buildPrint, buildDxf, sheetCsv, pointsCsv, CAL: () => CAL, handleNmea };
+$('#diagCopy').onclick = async () => {
+  const t = diagReport();
+  try { await navigator.clipboard.writeText(t); toast('진단 내용을 복사했습니다'); }
+  catch (e) { const ta = document.createElement('textarea'); ta.value = t; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); toast('진단 내용을 복사했습니다'); } catch (x) { toast('복사 실패 — 화면을 캡처하세요'); } ta.remove(); }
+};
+$('#diagShare').onclick = () => { if (navigator.share) navigator.share({ title: '간이측량기 진단', text: diagReport() }).catch(() => {}); else toast('이 브라우저는 공유를 지원하지 않습니다 — 복사를 쓰세요'); };
+window.__gl = { DG, dgStats, diagReport, HF, hfOnFinal, hfFindWake, hfStart, hfStop, FS, fsFeed, fsText, fsReset, say, ttsSpeak, ttsClip, ttsKey, handleUtterance, execute, ACTIONS, CMDLOG: () => CMDLOG, nluCtx, PENDING: () => PENDING, logStart, logStop, logFlush, logExport, logRead, SKY, skySnapshot, skyFeatures, logShot, shotCsv, SHOTLOG: () => SHOTLOG, LOGSID: () => LOG.sid, undo, UNDO, V, PICK: () => PICK, simTick, DXFD: () => DXFD, areaStats, findCsv, areaCsv, curTarget, stas, kindOf, shotKey, pickAt, showPick, render, IMU: () => IMU, levelCal, yawCal, computeRaw, S: () => S, L: () => L, SIM, sample, onEpoch, go, buildPrint, buildDxf, sheetCsv, pointsCsv, CAL: () => CAL, handleNmea };
 idb.get('dxf').then(d => { if (d && S.dxf && S.dxf.name) { DXFD = d; dirty = true; renderLayers(); dxfInfoUpdate(); } }).catch(() => {});
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}   // 저장공간 부족 시 브라우저가 앱 데이터를 지우지 않도록 요청(설치된 앱은 보통 허용)
 startSource(); buildStake(); renderAreas(); requestAnimationFrame(frame);

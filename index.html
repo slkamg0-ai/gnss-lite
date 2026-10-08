@@ -259,6 +259,13 @@
     <p class="hint">⚠ 키는 <b>이 폰 브라우저에만 평문 저장</b>되며 백업 파일에는 포함되지 않습니다. 무료 플랜은 월 크레딧이 적고(Flash 모델 기준 글자당 0.5), 라이브러리 목소리는 API에서 막힐 수 있습니다 — 그때는 기본 제공 목소리를 고르세요. 판매용은 상업 이용 조건 확인과 중계 서버가 필요합니다.</p>
   </div>
 
+  <div class="card" id="diagCard">
+    <h3>수신 진단</h3>
+    <p class="hint">측량이 막히거나 Fix가 이상할 때 <b>복사</b>를 눌러 내용을 보내 주세요(좌표는 들어 있지 않습니다). 최근 60초의 위치 갱신 속도, 정확도, Fix, 마지막 측정 실패 이유가 한 번에 나옵니다.</p>
+    <pre id="diagText" style="white-space:pre-wrap;word-break:break-all;font-size:.74rem;margin:6px 0"></pre>
+    <div class="row gap"><button id="diagCopy" class="primary sm">진단 복사</button><button id="diagShare" class="ghost sm">공유</button></div>
+  </div>
+
   <div class="card" id="llmCard">
     <h3>AI 보조 해석 (선택)</h3>
     <p class="hint">음성·문자 명령은 <b>기본적으로 이 기기에서 오프라인</b>으로 해석됩니다. 이를 켜면 규칙이 못 알아들은 말만 Anthropic API(Claude)로 보내 해석합니다. 전송 내용: <b>발화 + 점·선형 이름 목록 + 현재 모드</b>(좌표·측정값은 보내지 않음). 해석 결과는 항상 확인·실행취소 경로를 거칩니다.</p>
@@ -313,6 +320,6 @@
 <script src="core.js?v=6"></script>
 <script src="dxf.js?v=6"></script>
 <script src="nlu.js?v=7"></script>
-<script src="app.js?v=12"></script>
+<script src="app.js?v=14"></script>
 </body>
 </html>
