@@ -362,7 +362,7 @@ function updateTop() {
   vt.textContent = !S.settings.tilt.on ? 'OFF' : !tl ? '–' : tl.missing ? '?' : tl.theta.toFixed(1) + '°';
   vt.className = tl && !tl.missing ? (!tl.ok ? 'tbad' : tl.theta > tl.lim * 0.7 ? 'tw' : '') : (S.settings.tilt.on ? 'tbad' : '');
   if (tab === 'settings') updateTiltLive();
-  $('#vAcc').textContent = L && L.sdH != null ? `${(L.sdH * 100).toFixed(1)}/${L.sdV != null ? (L.sdV * 100).toFixed(1) : '–'}` : '–';
+  $('#vAcc').textContent = L && L.sdH != null ? (L.sdH >= 1 ? L.sdH.toFixed(1) + 'm' : `${(L.sdH * 100).toFixed(1)}/${L.sdV != null ? (L.sdV * 100).toFixed(1) : '–'}`) : '–';   // 1 m 이상이면 미터로 짧게(칸 겹침 방지)
   $('#vSrc').textContent = { sim: '데모', geo: '폰 GPS', serial: '시리얼' }[S.settings.source];
   $('#vN').textContent = L ? f3(L.site.n) : '–'; $('#vE').textContent = L ? f3(L.site.e) : '–'; $('#vZ').textContent = L ? f3(L.site.z) : '–';
   let w = '';
