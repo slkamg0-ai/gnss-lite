@@ -161,10 +161,20 @@
   <div class="card">
     <h3>위치 소스</h3>
     <div class="seg3 full" id="srcSel">
+      <button data-src="native" hidden>내장 USB<br><small>앱이 보드·보정 직접 처리</small></button>
       <button data-src="geo">폰 GPS<br><small>SW Maps/Lefebure 모의위치</small></button>
       <button data-src="serial">USB 시리얼<br><small>UM982 NMEA 직결</small></button>
       <button data-src="ble">ESP32 BLE<br><small>NTRIP+IMU 브리지</small></button>
       <button data-src="sim">데모<br><small>가상 위치</small></button>
+    </div>
+    <div id="nativeBox" hidden>
+      <div class="form">
+        <label>NTRIP 서버<input id="ntHost" placeholder="vrs.ngii.go.kr" autocomplete="off"></label><label>포트<input id="ntPort" type="number" placeholder="2101"></label>
+        <label>마운트포인트<input id="ntMount" autocomplete="off"></label><label>아이디<input id="ntUser" autocomplete="off"></label>
+        <label>비밀번호<input id="ntPw" type="password" autocomplete="off"></label>
+      </div>
+      <div class="row gap"><button id="ntSave" class="primary">저장하고 보정 시작</button><button id="ntStop" class="ghost">보정 중지</button></div>
+      <p class="hint">비밀번호는 폰의 보안 저장소(Keystore)에 암호화해 저장되고 화면·백업에는 남지 않습니다. 한 번 저장하면 앱을 열 때마다 보드 연결과 보정이 자동으로 시작됩니다.</p>
     </div>
     <div id="bleBox" hidden>
       <button id="btnBle" class="primary">ESP32 연결 (BLE)</button>
@@ -320,6 +330,6 @@
 <script src="core.js?v=6"></script>
 <script src="dxf.js?v=6"></script>
 <script src="nlu.js?v=7"></script>
-<script src="app.js?v=15"></script>
+<script src="app.js?v=16"></script>
 </body>
 </html>

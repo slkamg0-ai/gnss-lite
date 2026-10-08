@@ -251,20 +251,49 @@ async function sendBridgeCfg() {
   } catch (e) { toast(e.message); }
 }
 
-function stopSource() { simStop(); geoStop(); if (port) serialDisconnect(); if (bleDev && bleDev.gatt.connected) bleDev.gatt.disconnect(); IMU = null; L = null; fsReset(); }
+function stopSource() { simStop(); geoStop(); nativeStop(); if (port) serialDisconnect(); if (bleDev && bleDev.gatt.connected) bleDev.gatt.disconnect(); IMU = null; L = null; fsReset(); }
 function startSource() {
   stopSource();
   const s = S.settings.source;
-  if (s === 'sim') simStart(); else if (s === 'geo') geoStart(); else if (s === 'ble') srcStatus('“ESP32 연결”을 눌러 GNSSLite 장치를 선택하세요'); else srcStatus('“연결”을 눌러 시리얼 포트를 선택하세요');
+  if (s === 'sim') simStart(); else if (s === 'geo') geoStart(); else if (s === 'native') nativeStart(); else if (s === 'ble') srcStatus('“ESP32 연결”을 눌러 GNSSLite 장치를 선택하세요'); else srcStatus('“연결”을 눌러 시리얼 포트를 선택하세요');
   renderSettings(); if (tab === 'stake') buildStake(); dirty = true;
 }
 const SRC_HELP = {
   geo: 'SW Maps 또는 Lefebure NTRIP Client에서 UM982(+NTRIP)를 연결하고 “모의 위치(Mock location)”를 켠 뒤, 개발자옵션 ▸ 모의 위치 앱으로 지정하세요. 이 앱은 폰이 받는 위치를 그대로 쓰며, Fix 종류는 보고된 정확도(σ)로 추정합니다.',
+  native: 'Android 앱이 UM982 보드를 USB로 직접 읽고 NTRIP 보정 정보도 직접 받아 보드에 넣습니다. SW Maps가 필요 없습니다. 보드를 꽂고 아래에 NTRIP 계정을 한 번 저장하면 다음부터는 자동으로 연결됩니다.',
   serial: 'USB-OTG로 UM982의 NMEA(GGA, 가능하면 GST)를 직접 읽습니다. 수신기에 보정정보가 공급되는 구성에서만 RTK가 됩니다.',
   ble: 'ESP32가 폰 핫스팟으로 NTRIP 보정정보를 받아 UM982에 넣고, UM982 위치(NMEA)와 BNO085 자세($PIMU)를 BLE로 보냅니다. 폰 앱 하나로 RTK+기울기 보정까지 처리합니다.',
   sim: '가상 위치로 화면·계산·출력 흐름을 연습/검증하는 모드입니다. 실측 데이터가 아닙니다 (점에 SIM 표시).',
 };
 function srcStatus(t) { $('#srcStatus').textContent = t; }
+
+// ── 소스: 내장 USB (Android 앱: 보드 USB 직결 + NTRIP 을 앱이 처리, 규약은 docs/ANDROID_BRIDGE.md) ──
+const NATIVE = window.GLNative || null;
+let NST = null;
+const NSTAT = {
+  usb: { none: '미연결', 'no-device': '보드를 USB로 연결하세요', 'asking-permission': 'USB 권한 팝업에서 허용하세요', denied: 'USB 권한이 거부됨 — 다시 꽂아 허용하세요', unsupported: '지원하지 않는 USB 장치', 'open-failed': 'USB 열기 실패', connected: '보드 연결됨' },
+  ntrip: { stopped: '보정 꺼짐', connecting: '보정 서버 접속 중…', connected: '보정 수신 중' },
+};
+function nativeStatusText(s) {
+  const u = NSTAT.usb[s.usb] || s.usb, n = NSTAT.ntrip[s.ntrip] || s.ntrip;
+  return 'USB: ' + u + ' · ' + n + ' · NMEA ' + s.nmea + '줄 · RTCM ' + (s.rtcm / 1024).toFixed(1) + ' KB';
+}
+window.glNative = {
+  onNmea(text) { if (S.settings.source !== 'native') return; String(text).split('\n').forEach(l => { if (l) handleNmea(l); }); },
+  onStatus(json) { try { NST = JSON.parse(json); } catch (e) { return; } if (S.settings.source === 'native') srcStatus(nativeStatusText(NST)); },
+};
+function nativeStart() {
+  if (!NATIVE) { srcStatus('이 소스는 Android 앱에서만 쓸 수 있습니다'); return; }
+  try {
+    const c = JSON.parse(NATIVE.ntripLoad() || '{}');
+    if (c.host) { $('#ntHost').value = c.host; $('#ntPort').value = c.port; $('#ntMount').value = c.mount; $('#ntUser').value = c.user; }
+    $('#ntPw').placeholder = c.hasPass ? '(저장됨 — 바꿀 때만 입력)' : '';
+    NATIVE.connectUsb(+S.settings.baud || 115200);
+    if (c.host && c.hasPass) NATIVE.ntripStartSaved();
+    NST = JSON.parse(NATIVE.status()); srcStatus(nativeStatusText(NST));
+  } catch (e) { srcStatus('내장 USB 오류: ' + e.message); }
+}
+function nativeStop() { if (!NATIVE) return; try { NATIVE.ntripStop(); NATIVE.disconnectUsb(); } catch (e) {} }
 
 // ───────────── 평균 측정 ─────────────
 function sample(sec) {
@@ -363,7 +392,7 @@ function updateTop() {
   vt.className = tl && !tl.missing ? (!tl.ok ? 'tbad' : tl.theta > tl.lim * 0.7 ? 'tw' : '') : (S.settings.tilt.on ? 'tbad' : '');
   if (tab === 'settings') updateTiltLive();
   $('#vAcc').textContent = L && L.sdH != null ? (L.sdH >= 1 ? L.sdH.toFixed(1) + 'm' : `${(L.sdH * 100).toFixed(1)}/${L.sdV != null ? (L.sdV * 100).toFixed(1) : '–'}`) : '–';   // 1 m 이상이면 미터로 짧게(칸 겹침 방지)
-  $('#vSrc').textContent = { sim: '데모', geo: '폰 GPS', serial: '시리얼' }[S.settings.source];
+  $('#vSrc').textContent = { sim: '데모', geo: '폰 GPS', serial: '시리얼', ble: 'BLE', native: '내장 USB' }[S.settings.source];
   $('#vN').textContent = L ? f3(L.site.n) : '–'; $('#vE').textContent = L ? f3(L.site.e) : '–'; $('#vZ').textContent = L ? f3(L.site.z) : '–';
   let w = '';
   if (!L) w = '위치 수신 없음 — 설정에서 소스 확인'; else if (st > 3000) w = `수신 끊김 (${(st / 1000).toFixed(0)}초)`;
@@ -661,7 +690,8 @@ function renderSettings() {
   $('#crs').innerHTML = Object.entries(GL.CRS).map(([k, v]) => `<option value="${k}">${v.name}</option>`).join(''); $('#crs').value = s.crs;
   $('#antH').value = s.antH; $('#avgSec').value = s.avgSec; $('#tol').value = s.tol; $('#reqFix').checked = s.reqFix; $('#baud').value = s.baud;
   $$('#srcSel button').forEach(b => b.classList.toggle('on', b.dataset.src === s.source));
-  $('#serialBox').hidden = s.source !== 'serial'; $('#bleBox').hidden = s.source !== 'ble';
+  $('#serialBox').hidden = s.source !== 'serial'; $('#bleBox').hidden = s.source !== 'ble'; $('#nativeBox').hidden = s.source !== 'native';
+  $$('#srcSel button').forEach(b => { const d = b.dataset.src; b.hidden = d === 'native' ? !NATIVE : (NATIVE && (d === 'serial' || d === 'ble')); });   // 앱에서는 내장 USB 를 쓰고 Web Serial/BLE 는 숨김
   Object.entries(CFG_FIELDS).forEach(([k, id]) => { $('#' + id).value = S.bridge[k]; });
   const T = s.tilt; $('#tiltOn').checked = T.on; $('#tiltDecl').value = T.decl; $('#tiltMax').value = T.max; $('#tiltFrame').value = T.frame; $('#tiltSrc').value = T.imuSrc; updateTiltLive(); $('#srcHelp').textContent = SRC_HELP[s.source];
   if (s.source === 'sim') srcStatus('데모 실행 중');
@@ -716,6 +746,20 @@ $('#srcSel').onclick = e => { const b = e.target.closest('button'); if (!b) retu
   if (id === 'crs') { SIM.o = simOrigin(); SIM.n = SIM.o.n - 3; SIM.e = SIM.o.e - 4; } dirty = true; }));
 $('#btnSerial').onclick = () => port ? serialDisconnect() : serialConnect();
 $('#btnUm982').onclick = um982Cfg;
+$('#ntSave').onclick = () => {
+  if (!NATIVE) return;
+  const h = $('#ntHost').value.trim(), p = +$('#ntPort').value || 2101, m = $('#ntMount').value.trim(), u = $('#ntUser').value.trim(), pw = $('#ntPw').value;
+  if (!h || !m || !u) { toast('서버·마운트포인트·아이디를 입력하세요'); return; }
+  if (/[\r\n]/.test(h + m + u + pw)) { toast('줄바꿈이 들어간 값이 있습니다'); return; }
+  try {
+    NATIVE.ntripSave(h, p, m, u, pw);   // 비밀번호를 비워 두면 이전에 저장한 값을 유지한다
+    const c = JSON.parse(NATIVE.ntripLoad() || '{}');
+    if (!c.hasPass) { toast('비밀번호를 입력하세요'); return; }
+    $('#ntPw').value = ''; $('#ntPw').placeholder = '(저장됨 — 바꿀 때만 입력)';
+    NATIVE.ntripStartSaved(); toast('저장하고 보정을 시작합니다');
+  } catch (e) { toast('저장 실패: ' + e.message); }
+};
+$('#ntStop').onclick = () => { if (NATIVE) { try { NATIVE.ntripStop(); } catch (e) {} } };
 $('#calAdd').onclick = async () => {
   const k = knownPoints()[+$('#calKnown').value]; if (!k) return toast('기지점이 없습니다');
   try {
@@ -1434,6 +1478,7 @@ $('#diagShare').onclick = () => { if (navigator.share) navigator.share({ title: 
 window.__gl = { DG, dgStats, diagReport, HF, hfOnFinal, hfFindWake, hfStart, hfStop, FS, fsFeed, fsText, fsReset, say, ttsSpeak, ttsClip, ttsKey, handleUtterance, execute, ACTIONS, CMDLOG: () => CMDLOG, nluCtx, PENDING: () => PENDING, logStart, logStop, logFlush, logExport, logRead, SKY, skySnapshot, skyFeatures, logShot, shotCsv, SHOTLOG: () => SHOTLOG, LOGSID: () => LOG.sid, undo, UNDO, V, PICK: () => PICK, simTick, DXFD: () => DXFD, areaStats, findCsv, areaCsv, curTarget, stas, kindOf, shotKey, pickAt, showPick, render, IMU: () => IMU, levelCal, yawCal, computeRaw, S: () => S, L: () => L, SIM, sample, onEpoch, go, buildPrint, buildDxf, sheetCsv, pointsCsv, CAL: () => CAL, handleNmea };
 idb.get('dxf').then(d => { if (d && S.dxf && S.dxf.name) { DXFD = d; dirty = true; renderLayers(); dxfInfoUpdate(); } }).catch(() => {});
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}   // 저장공간 부족 시 브라우저가 앱 데이터를 지우지 않도록 요청(설치된 앱은 보통 허용)
+if (NATIVE && !S.settings.nativeInit) { S.settings.nativeInit = true; S.settings.source = 'native'; save(); }   // Android 앱 첫 실행 시 내장 USB 를 기본 소스로
 startSource(); buildStake(); renderAreas(); requestAnimationFrame(frame);
 loadShotLog(); lastSig = dataSig(); refreshUndoBtn(); $('#undoGo').onclick = undo; $('#undoBtn').onclick = undo;
 })();

@@ -5,6 +5,7 @@
   "scripts": {
     "test": "node test/core.test.js && node test/dxf.test.js && node test/nlu.test.js",
     "build:site": "node scripts/build-site.js",
+    "android:sync": "node scripts/sync-android.js",
     "build:sdk":"esbuild vendor/sdk-entry.js --bundle --format=iife --platform=browser --minify --outfile=vendor/anthropic.bundle.js"
   },
   "devDependencies": {
