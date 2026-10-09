@@ -55,6 +55,7 @@ function undo() {
   document.getElementById('undoBar').hidden = true; refreshUndoBtn(); refreshAll(); toast('되돌림: ' + u.label);
 }
 function refreshAll() { buildStake(); renderSurvey(); renderAreas(); renderSegs(); dirty = true; }
+if (S.settings.fixSd == null) S.settings.fixSd = 0.03;   // FIXED 로 인정하는 수평 추정 오차 한도(m), 0 이면 끔
 S.settings.tilt = Object.assign({ on: false, decl: -8.5, max: 3, yawOff: 0, axis: null, frame: 'ENU', imuSrc: 'phone' }, S.settings.tilt);
 S.bridge = Object.assign(defState().bridge, S.bridge);
 let CAL = GL.solveCalibration(S.calib.pairs);
@@ -215,7 +216,10 @@ function handleNmea(line) {
   if (m.type === 'GST') { gst = { sdH: Math.hypot(m.sdLat, m.sdLon), sdV: m.sdAlt, t: Date.now() }; return; }
   if (m.type === 'GGA' && m.fix > 0) {
     const g = gst && Date.now() - gst.t < 3000 ? gst : null;
-    onEpoch({ lat: m.lat, lon: m.lon, alt: m.alt, fix: GL.fixClass(m.fix), sats: m.sats, hdop: m.hdop, age: m.age, sdH: g ? g.sdH : null, sdV: g ? g.sdV : null, src: S.settings.source });
+    let fix = GL.fixClass(m.fix);
+    const rawFix = fix, lim = S.settings.fixSd;
+    if (fix === 'FIXED' && g && lim > 0 && g.sdH > lim) fix = 'FLOAT';   // 수신기는 FIXED 라도 추정 오차(GST σ)가 한도보다 크면 믿지 않는다
+    onEpoch({ lat: m.lat, lon: m.lon, alt: m.alt, fix, rawFix, sats: m.sats, hdop: m.hdop, age: m.age, sdH: g ? g.sdH : null, sdV: g ? g.sdV : null, src: S.settings.source });
   }
 }
 async function um982Cfg() {
@@ -392,11 +396,11 @@ function updateTop() {
   vt.className = tl && !tl.missing ? (!tl.ok ? 'tbad' : tl.theta > tl.lim * 0.7 ? 'tw' : '') : (S.settings.tilt.on ? 'tbad' : '');
   if (tab === 'settings') updateTiltLive();
   $('#vAcc').textContent = L && L.sdH != null ? (L.sdH >= 1 ? L.sdH.toFixed(1) + 'm' : `${(L.sdH * 100).toFixed(1)}/${L.sdV != null ? (L.sdV * 100).toFixed(1) : '–'}`) : '–';   // 1 m 이상이면 미터로 짧게(칸 겹침 방지)
-  $('#vSrc').textContent = { sim: '데모', geo: '폰 GPS', serial: '시리얼', ble: 'BLE', native: '내장 USB' }[S.settings.source];
+  $('#vSrc').textContent = { sim: '데모', geo: '폰 GPS', serial: '시리얼', ble: 'BLE', native: 'USB' }[S.settings.source];
   $('#vN').textContent = L ? f3(L.site.n) : '–'; $('#vE').textContent = L ? f3(L.site.e) : '–'; $('#vZ').textContent = L ? f3(L.site.z) : '–';
   let w = '';
   if (!L) w = '위치 수신 없음 — 설정에서 소스 확인'; else if (st > 3000) w = `수신 끊김 (${(st / 1000).toFixed(0)}초)`;
-  else if (S.settings.reqFix && fix !== 'FIXED') w = `FIXED 아님(${fix}) — 측량 잠김`; else if (!isFinite(L.site.z)) w = '고도 정보 없음 — 높이 측량 불가';
+  else if (S.settings.reqFix && fix !== 'FIXED') w = L.rawFix === 'FIXED' ? `수신기는 FIXED지만 추정 오차 ${(L.sdH * 100).toFixed(1)} cm > ${(S.settings.fixSd * 100).toFixed(1)} cm — FLOAT 취급(측량 잠김)` : `FIXED 아님(${fix}) — 측량 잠김`; else if (!isFinite(L.site.z)) w = '고도 정보 없음 — 높이 측량 불가';
   else if (L.tilt && L.tilt.missing) w = 'IMU: ' + L.tilt.why + ' — 측량 잠김';
   else if (L.tilt && !L.tilt.ok) w = '기울기 ' + L.tilt.theta.toFixed(1) + '° > 한계 ' + L.tilt.lim.toFixed(1) + '°' + (L.tilt.magOk ? '' : ' (자력 불량)') + ' — 측량 잠김';
   else if (L.tilt && !L.tilt.magOk) w = '자력 불량 — 방위 보정 꺼짐(높이만 보정), 폴을 수직으로';
@@ -688,7 +692,7 @@ $('#segList').addEventListener('click', e => {
 function renderSettings() {
   const s = S.settings;
   $('#crs').innerHTML = Object.entries(GL.CRS).map(([k, v]) => `<option value="${k}">${v.name}</option>`).join(''); $('#crs').value = s.crs;
-  $('#antH').value = s.antH; $('#avgSec').value = s.avgSec; $('#tol').value = s.tol; $('#reqFix').checked = s.reqFix; $('#baud').value = s.baud;
+  $('#antH').value = s.antH; $('#avgSec').value = s.avgSec; $('#tol').value = s.tol; $('#reqFix').checked = s.reqFix; $('#fixSd').value = s.fixSd; $('#baud').value = s.baud;
   $$('#srcSel button').forEach(b => b.classList.toggle('on', b.dataset.src === s.source));
   $('#serialBox').hidden = s.source !== 'serial'; $('#bleBox').hidden = s.source !== 'ble'; $('#nativeBox').hidden = s.source !== 'native';
   $$('#srcSel button').forEach(b => { const d = b.dataset.src; b.hidden = d === 'native' ? !NATIVE : (NATIVE && (d === 'serial' || d === 'ble')); });   // 앱에서는 내장 USB 를 쓰고 Web Serial/BLE 는 숨김
@@ -741,7 +745,7 @@ function knownPoints() {
   S.points.forEach(p => k.push({ label: `${p.name} (N/E/Z)`, n: p.n, e: p.e, z: p.z })); return k;
 }
 $('#srcSel').onclick = e => { const b = e.target.closest('button'); if (!b) return; S.settings.source = b.dataset.src; save(); startSource(); };
-['crs', 'antH', 'avgSec', 'tol', 'reqFix', 'baud'].forEach(id => $('#' + id).addEventListener('change', e => {
+['crs', 'antH', 'avgSec', 'tol', 'reqFix', 'fixSd', 'baud'].forEach(id => $('#' + id).addEventListener('change', e => {
   const t = e.target; S.settings[id] = t.type === 'checkbox' ? t.checked : (id === 'crs' ? t.value : +t.value); save();
   if (id === 'crs') { SIM.o = simOrigin(); SIM.n = SIM.o.n - 3; SIM.e = SIM.o.e - 4; } dirty = true; }));
 $('#btnSerial').onclick = () => port ? serialDisconnect() : serialConnect();

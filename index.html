@@ -9,7 +9,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon-192.png">
-<link rel="stylesheet" href="style.css?v=10">
+<link rel="stylesheet" href="style.css?v=11">
 </head>
 <body>
 <header id="top">
@@ -205,6 +205,8 @@
       <label>안테나 높이 (m)<input id="antH" type="number" step="0.001" inputmode="decimal"></label>
       <label>평균 시간 (초)<input id="avgSec" type="number" step="1" min="1" inputmode="numeric"></label>
       <label>허용 오차 (m)<input id="tol" type="number" step="0.005" min="0" inputmode="decimal"></label>
+      <label>FIXED 인정 오차 한도 (m)<input id="fixSd" type="number" step="0.005" min="0" inputmode="decimal"></label>
+      <p class="hint">수신기가 FIXED라고 해도 추정 오차(σ)가 이 값보다 크면 FLOAT로 취급합니다. 0이면 끕니다. (기본 0.03 = 3 cm)</p>
       <label class="chk"><input id="reqFix" type="checkbox"> FIXED일 때만 측량 허용</label>
     </div>
     <p class="hint">지반고 = (GGA 고도 − 안테나 높이) + 현장 보정 Z. 안테나 높이는 <b>지면 → 안테나 위상중심</b>까지 (폴 길이 + 마운트 + 위상중심 오프셋).</p>
@@ -330,6 +332,6 @@
 <script src="core.js?v=6"></script>
 <script src="dxf.js?v=6"></script>
 <script src="nlu.js?v=7"></script>
-<script src="app.js?v=16"></script>
+<script src="app.js?v=17"></script>
 </body>
 </html>
