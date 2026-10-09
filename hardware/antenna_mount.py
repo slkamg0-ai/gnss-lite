@@ -421,12 +421,28 @@ def write_dxf(path, p=P):
     d.saveas(path)
 
 
+def coupon(p=P, clears=(0.25, 0.35, 0.45)):
+    """나사 공차 시험편: 지름 22 x 3 mm 받침 위에 5/8"-11 수나사 7 mm. 공차를 다르게 3개(왼쪽부터 clears, x=-26/0/+26)를 한 판에 만든다."""
+    tris = []
+    for i, cl in enumerate(clears):
+        dx = (i - 1) * 26
+        base = slab([circle(0, 0, 11, 96)], 0, 3)
+        st = stud(-p['stud_len'], 0.5, p['stud_major'], p['stud_pitch'], cl)
+        tris += [tuple((x + dx, y, z) for (x, y, z) in t) for t in base + st]
+    return tris
+
+
 def main():
     try:
         sys.stdout.reconfigure(encoding='utf-8')   # Windows 콘솔(cp1252)에서도 한글 출력
     except Exception:
         pass
     here = os.path.dirname(os.path.abspath(__file__))
+    if 'coupon' in sys.argv:                          # python hardware/antenna_mount.py coupon
+        tris = coupon()
+        write_stl(os.path.join(here, 'thread_test.stl'), to_print_orientation(tris, 3.0), 'thread_test')
+        print('thread_test.stl 저장: 왼쪽부터 공차 0.25(꽉 낌) / 0.35(기본) / 0.45(헐렁)')
+        return
     variants = [('antenna_mount', (270,)),                 # 정면 창 1개
                 ('antenna_mount_4window', (0, 90, 180, 270))]  # 4면 창: 조인 각도와 무관하게 정면에 가장 가까운 창으로 케이블을 뺀다
     for name, wins in variants:
