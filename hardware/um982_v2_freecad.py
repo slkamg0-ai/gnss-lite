@@ -6,7 +6,7 @@
 구조(조립 상태, 원점 = 베이스판 윗면 중심, z 위)
   본체: 지름 38 원통(안테나 몸통 Ø38 과 같은 굵기). 바닥 중앙 5/8"-11 수나사 7 mm(베이스판 중앙 구멍).
         보드는 위에서 내려 끼운다: 모서리 4곳 짧은 슬롯 받침(홈 폭 = 기판 1.6 + 여유)에 물리고 나사는 없다.
-        옆(+y)에 방수 USB-C 패널 단자 구멍, 목 위쪽에 바요넷 걸림쇠 3개 + O링 홈(반경 방향).
+        옆(+y)에 평평한 패드 + 둥근 사각 방수 USB-C 단자 구멍(패킹 홈 포함, 머리 치마 아래), 목 위쪽에 바요넷 걸림쇠 3개 + O링 홈(반경 방향).
   머리: 지름 50 (안테나 귀 반지름 24.9 를 덮음). 윗판에 안테나 M3 x 4(볼트 원 Ø40, 열압입 인서트 구멍), 가운데 목 구멍 Ø22,
         안테나 밑 면 O링 홈. 아래 치마가 본체 목을 덮고 1/4바퀴(35°)로 잠긴다. 안쪽 빈 공간은 안테나 케이블(60 cm) 보관.
 고정 형상(슬롯 받침·걸림쇠·바요넷 홈)은 스크립트가 숫자로 만든다 → 이 값들은 Params 를 바꿔도 따라 바뀌지 않으니 스크립트 PARAMS 를 고쳐 다시 실행한다.
@@ -42,7 +42,10 @@ PARAMS = [
     ('bd_W', 26.0, '보드 폭'), ('bd_H', 38.0, '보드 높이(세운 길이)'), ('bd_T', 7.6, '보드 전체 두께(부품 포함)'), ('pcb_t', 1.6, '기판 두께'),
     ('slot_clr', 0.3, '슬롯 홈 여유'), ('rail_len', 8.0, '슬롯 받침 길이'), ('rail_depth', 2.0, '기판 가장자리 물리는 깊이'), ('rail_thk', 5.0, '받침 두께(앞뒤)'),
     ('stop_h', 2.0, '보드 아래 받침턱 높이'), ('plug_zone', 22.0, '보드 위 USB 플러그 공간 높이'),
-    ('usb_panel_d', 16.0, '방수 USB-C 패널 단자 구멍 지름'), ('usb_panel_dz', 12.0, '구멍 중심 높이(보드 위끝 위)'),
+    ('usb_w', 14.0, '단자 구멍 폭(가정: 사각 플랜지형 방수 USB-C)'), ('usb_h', 8.0, '단자 구멍 높이'), ('usb_r', 2.5, '구멍 모서리 반경'),
+    ('usb_panel_dz', 1.5, '구멍 중심 높이(보드 위끝 위) — 머리 치마(z_s) 아래에 들어와야 함'),
+    ('pad_w', 26.0, '평평한 패드 폭'), ('pad_h', 16.0, '패드 높이'), ('pad_out', 1.5, '패드 면이 몸체 외면(+y)보다 튀어나온 양'), ('pad_r', 3.0, '패드 모서리 반경'),
+    ('gk_w', 1.6, '패킹 홈 폭'), ('gk_d', 1.0, '패킹 홈 깊이'), ('gk_gap', 1.2, '구멍 가장자리에서 패킹 홈 안쪽까지 거리'),
     ('# 안테나 BT-T009', None, None),
     ('ant_cable_len', 600.0, '안테나 케이블 길이(짧게 자르면 머리 높이가 줄어듦)'), ('neck_hole_d', 22.0, '안테나 목 구멍'),
     ('ant_neck_len', 13.0, '목이 바닥 아래로 나온 길이(가정)'), ('ear', 40 / math.sqrt(2) / 2, 'M3 구멍 위치(±)'),
@@ -190,15 +193,32 @@ z_g = z_bt - 3.5 - v['groove_w']
 groove = zcyl(R_body + 0.01, z_g, z_g + v['groove_w']).cut(zcyl(R_body - v['groove_d'], z_g - 1, z_g + v['groove_w'] + 1))
 b_groove = feat('Body_ORingGroove', groove)
 
-# 방수 USB-C 패널 단자 구멍(+y 벽, 보드 위 공간)
-z_u = z_t + v['usb_panel_dz']
-usb = Part.makeCylinder(v['usb_panel_d'] / 2, R_body - R_in + 2.0, vec(0, R_in - 1.0, z_u), vec(0, 1, 0))
-b_usb = feat('Body_UsbPanelHole', usb)
+# 방수 USB-C 패널 단자: 곡면 벽 위에 평평한 패드를 붙이고, 패드 면에 둥근 사각 구멍 + 패킹(가스켓) 홈을 판다. 패드는 머리 치마(z_s) 아래에 둔다.
+def rrect(w, h, r, y0, y1, zc):
+    """x 폭 w, z 높이 h, 모서리 반경 r 인 둥근 사각 기둥(y0~y1, 중심 높이 zc)"""
+    bx = box(-w / 2, w / 2, y0, y1, zc - h / 2, zc + h / 2)
+    ed = [e for e in bx.Edges if abs(e.Vertexes[0].Point.y - e.Vertexes[1].Point.y) > 1e-6]
+    return bx.makeFillet(r, ed)
 
-b1 = fuse('Body_WithRails', [b_shell, b_rails, b_lugs])
+
+z_u = z_t + v['usb_panel_dz']
+y_f = R_body + v['pad_out']
+pad = rrect(v['pad_w'], v['pad_h'], v['pad_r'], 12.0, y_f, z_u).cut(zcyl(R_in, 0, z_bt + 1))
+assert z_u + v['pad_h'] / 2 < z_s - 0.2, '패드가 머리 치마와 겹침'
+b_pad = feat('Body_UsbPad', pad)
+o_w, o_h = v['usb_w'] + 2 * (v['gk_gap'] + v['gk_w']), v['usb_h'] + 2 * (v['gk_gap'] + v['gk_w'])
+i_w, i_h = v['usb_w'] + 2 * v['gk_gap'], v['usb_h'] + 2 * v['gk_gap']
+ro, ri = v['usb_r'] + v['gk_gap'] + v['gk_w'], v['usb_r'] + v['gk_gap']
+gasket = rrect(o_w, o_h, ro, y_f - v['gk_d'], y_f + 1, z_u).cut(rrect(i_w, i_h, ri, y_f - v['gk_d'] - 1, y_f + 2, z_u))
+b_gasket = feat('Body_UsbGasketGroove', gasket)
+usb = rrect(v['usb_w'], v['usb_h'], v['usb_r'], R_in - 3.0, y_f + 1, z_u)
+b_usb = feat('Body_UsbHole', usb)
+
+b1 = fuse('Body_WithRails', [b_shell, b_rails, b_lugs, b_pad])
 b2 = cut('Body_Slotted', b1, b_slits)
 b3 = cut('Body_Grooved', b2, b_groove)
-b4 = cut('Body_UsbHole', b3, b_usb)
+b3b = cut('Body_UsbGasket', b3, b_gasket)
+b4 = cut('Body_UsbHole', b3b, b_usb)
 st_core = cyl('Stud_Core', '(stud_major - stud_clear) / 2 - 1.35', 'stud_len + 0.5', z='-stud_len')
 st_thr = thread_ridge('Stud_Thread', '(stud_major - stud_clear) / 2 - 1.35 - 0.1', '-stud_len + 1.0', 'stud_len - 1.0', 'stud_pitch', 1.35 + 0.1, 2.0, 0.25)
 body = fuse('Body', [b4, st_core, st_thr])
