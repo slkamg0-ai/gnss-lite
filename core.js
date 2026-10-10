@@ -406,7 +406,35 @@
     return qNorm(qMul(qMul(qz, qx), qy));
   }
 
-  const api = { CRS, toProjected, fromProjected, parseNmea, nmeaChecksumOk, nmeaChecksumAppend, makeLineBuffer, fixClass, fixFromAccuracy,
+  // 국가지오이드 KNGeoid24 (국토지리정보원 .ggf, 'TNL GRID FILE'). 헤더: float64@0x30 [위도최소·최대, 경도최소·최대, 위도·경도 간격(°)],
+  // int32@0x60 [행수, 열수]. 격자는 float32(LE), 경도 방향 우선·북쪽 행부터. 끝 16바이트(최소·최대 ×1000)는 데이터 시작 위치 역산에 쓴다.
+  function parseGgf(buf) {
+    const u = buf instanceof ArrayBuffer ? new Uint8Array(buf) : new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+    if (u.length < 0x90 || String.fromCharCode.apply(null, u.subarray(2, 15)) !== 'TNL GRID FILE') throw new Error('지오이드 파일 형식이 아닙니다');
+    const dv = new DataView(u.buffer, u.byteOffset, u.byteLength);
+    const latMin = dv.getFloat64(0x30, true), latMax = dv.getFloat64(0x38, true), lonMin = dv.getFloat64(0x40, true), lonMax = dv.getFloat64(0x48, true);
+    const dLat = dv.getFloat64(0x50, true), dLon = dv.getFloat64(0x58, true), rows = dv.getInt32(0x60, true), cols = dv.getInt32(0x64, true);
+    const off = u.length - 16 - rows * cols * 4;
+    if (!(rows > 1 && cols > 1 && off >= 0x90 && dLat > 0 && dLon > 0 && latMax > latMin && lonMax > lonMin)) throw new Error('지오이드 파일 헤더가 올바르지 않습니다');
+    const data = new Float32Array(rows * cols);
+    for (let i = 0; i < data.length; i++) data[i] = dv.getFloat32(off + i * 4, true);
+    return { rows, cols, latMin, latMax, lonMin, lonMax, dLat, dLon, data };
+  }
+  // 지오이드고 N(m) 쌍선형 보간. 영역 밖이면 NaN
+  function geoidN(g, lat, lon) {
+    const r = (g.latMax - lat) / g.dLat, c = (lon - g.lonMin) / g.dLon;
+    if (!(r >= 0 && c >= 0 && r <= g.rows - 1 && c <= g.cols - 1)) return NaN;
+    const r0 = Math.min(Math.floor(r), g.rows - 2), c0 = Math.min(Math.floor(c), g.cols - 2), fr = r - r0, fc = c - c0, d = g.data, w = g.cols, i = r0 * w + c0;
+    return d[i] * (1 - fr) * (1 - fc) + d[i + 1] * (1 - fr) * fc + d[i + w] * fr * (1 - fc) + d[i + w + 1] * fr * fc;
+  }
+  // 높이 기준 선택. alt: 수신 고도, sep: GGA 지오이드분리(없으면 null/NaN → 폰 고도로 보고 타원체고로 간주), N: 국가지오이드고
+  // 'rx' = 수신값 그대로(수신기 내장 지오이드), 'kn' = 타원체고(alt+sep) − N. N 을 모르면 수신값 유지
+  function heightRef(alt, sep, N, mode) {
+    if (mode !== 'kn' || !isFinite(alt) || !isFinite(N)) return alt;
+    return (isFinite(sep) ? alt + sep : alt) - N;
+  }
+
+  const api = { parseGgf, geoidN, heightRef, CRS, toProjected, fromProjected, parseNmea, nmeaChecksumOk, nmeaChecksumAppend, makeLineBuffer, fixClass, fixFromAccuracy,
     qMul, qConj, qNorm, qRot, qToEnu, qFromDeviceOrientation, poleAxisFromLevel, tiltInfo, tiltCompensate, allowedTilt, yawOffsetFrom, azimuth, pairInfo, staName, makeStations, makeAlignment, alignInfo, polyStats, guide, cutFill, markText, meanSd, solveCalibration, applyCalibration, findOutlier, dxfBuilder, hyp };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.GL = api;
 })(typeof window !== 'undefined' ? window : globalThis);

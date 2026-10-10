@@ -56,6 +56,19 @@ function undo() {
 }
 function refreshAll() { buildStake(); renderSurvey(); renderAreas(); renderSegs(); dirty = true; }
 if (S.settings.fixSd == null) S.settings.fixSd = 0.03;   // FIXED 로 인정하는 수평 추정 오차 한도(m), 0 이면 끔
+if (S.settings.hRef == null) S.settings.hRef = 'rx';      // 높이 기준: 'rx' 수신기 고도 그대로 / 'kn' 국가지오이드(KNGeoid24) 정표고
+
+// 국가지오이드 격자(약 700 KB): 높이 기준을 'kn' 으로 쓸 때만 내려받는다(서비스워커가 캐시하므로 오프라인에서도 동작)
+let GEOID = null, geoidMsg = '';
+async function loadGeoid() {
+  if (GEOID || geoidMsg === '불러오는 중…') return;
+  geoidMsg = '불러오는 중…';
+  try {
+    const r = await fetch('data/kngeo24.ggf'); if (!r.ok) throw new Error('HTTP ' + r.status);
+    GEOID = GL.parseGgf(await r.arrayBuffer()); geoidMsg = 'KNGeoid24 적용 중 (국토지리정보원 2024)';
+  } catch (e) { geoidMsg = '지오이드 파일을 불러오지 못했습니다: ' + e.message; }
+  renderSettings();
+}
 S.settings.tilt = Object.assign({ on: false, decl: -8.5, max: 3, yawOff: 0, axis: null, frame: 'ENU', imuSrc: 'phone' }, S.settings.tilt);
 S.bridge = Object.assign(defState().bridge, S.bridge);
 S.settings.calOpts = Object.assign({ scale: false, z: 'auto' }, S.settings.calOpts);   // 현장 보정 옵션: 축척 포함 여부, 높이 방식(auto/const/plane)
@@ -121,14 +134,16 @@ function diagReport() {
   const s = S.settings, d = dgStats(), w = $('#warn'), warn = w && !w.hidden ? w.textContent : '(경고 없음)';
   const f = (v, k) => v == null || !isFinite(v) ? '–' : (+v).toFixed(k), cm = v => v == null ? '–' : (v * 100).toFixed(1);
   return ['[간이측량기 진단] ' + new Date().toISOString(), 'GNSS-Lite v' + VER + ' · ' + location.host, 'UA: ' + navigator.userAgent,
-    `설정: 소스=${s.source} 좌표계=${s.crs} 안테나높이=${s.antH} 평균=${s.avgSec}s 허용오차=${s.tol} FIXED만측량=${s.reqFix} 기울기보정=${s.tilt.on}(${s.tilt.imuSrc})`,
+    `설정: 소스=${s.source} 좌표계=${s.crs} 높이기준=${s.hRef}(${hRefText().replace(/^현재: /, '')}) 안테나높이=${s.antH} 평균=${s.avgSec}s 허용오차=${s.tol} FIXED만측량=${s.reqFix} 기울기보정=${s.tilt.on}(${s.tilt.imuSrc})`,
     '위치 소스 상태: ' + ($('#srcStatus') ? $('#srcStatus').textContent : '–'), '경고: ' + warn,
     d ? `최근 60초: 갱신 ${d.n}회(${f(d.hz, 2)} Hz, 최대 간격 ${f(d.dtMax, 1)}s, 마지막 갱신 ${f(d.ageLast, 1)}s 전), FIXED ${f(d.fixedPct, 0)}%, 수평정확도 최소/최대/마지막 ${cm(d.sdMin)}/${cm(d.sdMax)}/${cm(d.sdLast)} cm, 고도 포함 ${f(d.altPct, 0)}%` : '최근 60초: 위치 수신 없음',
     'Fix 통계: ' + fsText(), '마지막 측정: ' + (DG.lastSampErr ? '실패 — ' + DG.lastSampErr : DG.lastSampOk || '(없음)')].join('\n');
 }
 function onEpoch(ep) {
-  const p = GL.toProjected(S.settings.crs, ep.lat, ep.lon), r = computeRaw(p, ep.alt == null ? NaN : ep.alt);
-  L = Object.assign({}, ep, { raw: r.raw, tilt: r.tilt, site: GL.applyCalibration(CAL, r.raw), t: Date.now() });
+  const p = GL.toProjected(S.settings.crs, ep.lat, ep.lon), alt = ep.alt == null ? NaN : ep.alt;
+  const N = GEOID && S.settings.source !== 'sim' ? GL.geoidN(GEOID, ep.lat, ep.lon) : NaN;     // 데모 데이터는 가상 높이라 환산하지 않음
+  const r = computeRaw(p, GL.heightRef(alt, ep.geoid, N, S.settings.hRef));
+  L = Object.assign({}, ep, { raw: r.raw, tilt: r.tilt, site: GL.applyCalibration(CAL, r.raw), N, t: Date.now() });
   fsFeed(ep.fix, L.t); dgFeed(ep, L.t);
   logEpoch(L);
   if (sampler) feedSampler();
@@ -222,7 +237,7 @@ function handleNmea(line) {
     let fix = GL.fixClass(m.fix);
     const rawFix = fix, lim = S.settings.fixSd;
     if (fix === 'FIXED' && g && lim > 0 && g.sdH > lim) fix = 'FLOAT';   // 수신기는 FIXED 라도 추정 오차(GST σ)가 한도보다 크면 믿지 않는다
-    onEpoch({ lat: m.lat, lon: m.lon, alt: m.alt, fix, rawFix, sats: m.sats, hdop: m.hdop, age: m.age, sdH: g ? g.sdH : null, sdV: g ? g.sdV : null, src: S.settings.source });
+    onEpoch({ lat: m.lat, lon: m.lon, alt: m.alt, geoid: m.geoid, fix, rawFix, sats: m.sats, hdop: m.hdop, age: m.age, sdH: g ? g.sdH : null, sdV: g ? g.sdV : null, src: S.settings.source });
   }
 }
 async function um982Cfg() {
@@ -692,10 +707,17 @@ $('#segList').addEventListener('click', e => {
 });
 
 // ───────────── 설정 / 보정 ─────────────
+// 높이 기준 설명(설정 화면): 선택한 기준과 현재 위치의 값(수신 고도·수신기 지오이드분리·국가지오이드고)을 함께 보여 준다
+function hRefText() {
+  const kn = S.settings.hRef === 'kn', f = v => v == null || !isFinite(v) ? '–' : (+v).toFixed(2);
+  let t = kn ? '현재: 국가지오이드 정표고 = (GGA 고도 + 수신기 지오이드분리) − KNGeoid24. ' + (geoidMsg || '') : '현재: 수신기가 주는 고도를 그대로 사용(수신기 내장 지오이드 기준, 보통 해발).';
+  if (L) t += ` · 지금 위치: 수신 고도 ${f(L.alt)} m · 수신기 분리 ${f(L.geoid)} m · KN ${f(L.N)} m`;
+  return t;
+}
 function renderSettings() {
   const s = S.settings;
   $('#crs').innerHTML = Object.entries(GL.CRS).map(([k, v]) => `<option value="${k}">${v.name}</option>`).join(''); $('#crs').value = s.crs;
-  $('#antH').value = s.antH; $('#avgSec').value = s.avgSec; $('#tol').value = s.tol; $('#reqFix').checked = s.reqFix; $('#fixSd').value = s.fixSd; $('#baud').value = s.baud;
+  $('#hRef').value = s.hRef; $('#hRefInfo').textContent = hRefText(); $('#antH').value = s.antH; $('#avgSec').value = s.avgSec; $('#tol').value = s.tol; $('#reqFix').checked = s.reqFix; $('#fixSd').value = s.fixSd; $('#baud').value = s.baud;
   $$('#srcSel button').forEach(b => b.classList.toggle('on', b.dataset.src === s.source));
   $('#serialBox').hidden = s.source !== 'serial'; $('#bleBox').hidden = s.source !== 'ble'; $('#nativeBox').hidden = s.source !== 'native';
   $$('#srcSel button').forEach(b => { const d = b.dataset.src; b.hidden = d === 'native' ? !NATIVE : (NATIVE && (d === 'serial' || d === 'ble')); });   // 앱에서는 내장 USB 를 쓰고 Web Serial/BLE 는 숨김
@@ -755,8 +777,9 @@ function knownPoints() {
   S.points.forEach(p => k.push({ label: `${p.name} (N/E/Z)`, n: p.n, e: p.e, z: p.z })); return k;
 }
 $('#srcSel').onclick = e => { const b = e.target.closest('button'); if (!b) return; S.settings.source = b.dataset.src; save(); startSource(); };
-['crs', 'antH', 'avgSec', 'tol', 'reqFix', 'fixSd', 'baud'].forEach(id => $('#' + id).addEventListener('change', e => {
-  const t = e.target; S.settings[id] = t.type === 'checkbox' ? t.checked : (id === 'crs' ? t.value : +t.value); save();
+['crs', 'antH', 'avgSec', 'tol', 'reqFix', 'fixSd', 'baud', 'hRef'].forEach(id => $('#' + id).addEventListener('change', e => {
+  const t = e.target; S.settings[id] = t.type === 'checkbox' ? t.checked : (id === 'crs' || id === 'hRef' ? t.value : +t.value); save();
+  if (id === 'hRef') { if (t.value === 'kn') loadGeoid(); renderSettings(); }
   if (id === 'crs') { SIM.o = simOrigin(); SIM.n = SIM.o.n - 3; SIM.e = SIM.o.e - 4; } dirty = true; }));
 $('#btnSerial').onclick = () => port ? serialDisconnect() : serialConnect();
 $('#btnUm982').onclick = um982Cfg;
@@ -1547,6 +1570,7 @@ window.__gl = { DG, dgStats, diagReport, HF, hfOnFinal, hfFindWake, hfStart, hfS
 idb.get('dxf').then(d => { if (d && S.dxf && S.dxf.name) { DXFD = d; dirty = true; renderLayers(); dxfInfoUpdate(); } }).catch(() => {});
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}   // 저장공간 부족 시 브라우저가 앱 데이터를 지우지 않도록 요청(설치된 앱은 보통 허용)
 if (NATIVE && !S.settings.nativeInit) { S.settings.nativeInit = true; S.settings.source = 'native'; save(); }   // Android 앱 첫 실행 시 내장 USB 를 기본 소스로
+if (S.settings.hRef === 'kn') loadGeoid();
 startSource(); buildStake(); renderAreas(); requestAnimationFrame(frame);
 loadShotLog(); lastSig = dataSig(); refreshUndoBtn(); $('#undoGo').onclick = undo; $('#undoBtn').onclick = undo;
 })();

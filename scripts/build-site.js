@@ -7,7 +7,7 @@ const path = require('path');
 const root = path.join(__dirname, '..');
 const out = path.join(root, 'dist');
 const FILES = ['index.html', 'style.css', 'core.js', 'dxf.js', 'nlu.js', 'app.js', 'sw.js', 'manifest.webmanifest',
-  'icon.svg', 'icon-192.png', 'icon-512.png', 'vendor/anthropic.bundle.js'];
+  'icon.svg', 'icon-192.png', 'icon-512.png', 'vendor/anthropic.bundle.js', 'data/kngeo24.ggf'];
 
 fs.rmSync(out, { recursive: true, force: true });
 for (const f of FILES) {

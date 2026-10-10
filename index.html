@@ -202,6 +202,8 @@
     <h3>측량 조건</h3>
     <div class="form">
       <label>좌표계<select id="crs"></select></label>
+      <label>높이 기준<select id="hRef"><option value="rx">수신기 고도 그대로</option><option value="kn">국가지오이드 KNGeoid24 (정표고)</option></select></label>
+      <p class="hint" id="hRefInfo"></p>
       <label>안테나 높이 (m)<input id="antH" type="number" step="0.001" inputmode="decimal"></label>
       <label>평균 시간 (초)<input id="avgSec" type="number" step="1" min="1" inputmode="numeric"></label>
       <label>허용 오차 (m)<input id="tol" type="number" step="0.005" min="0" inputmode="decimal"></label>
@@ -335,9 +337,9 @@
 </nav>
 
 <div id="printArea"></div>
-<script src="core.js?v=7"></script>
+<script src="core.js?v=8"></script>
 <script src="dxf.js?v=6"></script>
 <script src="nlu.js?v=7"></script>
-<script src="app.js?v=19"></script>
+<script src="app.js?v=20"></script>
 </body>
 </html>

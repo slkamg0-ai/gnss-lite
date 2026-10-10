@@ -321,5 +321,44 @@ t('IMU 프레임 NED → ENU 변환: 같은 기울기가 동일하게 복원', (
   assert.strictEqual(GL.qToEnu([1, 0, 0, 0], 'ENU')[0], 1);
 });
 
+// ── 국가지오이드 KNGeoid24 (.ggf) ──
+const GGF = require('fs').readFileSync(require('path').join(__dirname, '..', 'data', 'kngeo24.ggf'));
+t('KNGeoid24 헤더: 368×490, 위도 33~39°N · 경도 124~132°E, 간격 0.01636°', () => {
+  const g = GL.parseGgf(GGF);
+  assert.strictEqual(g.rows, 368); assert.strictEqual(g.cols, 490);
+  near(g.latMin, 32.99796, 1e-9); near(g.latMax, 39.00208, 1e-9); near(g.lonMin, 123.99796, 1e-9); near(g.lonMax, 131.998, 1e-9);
+  near(g.dLat, 0.01636, 1e-9); near(g.dLon, 0.01636, 1e-9);
+  assert.strictEqual(g.data.length, 368 * 490);
+});
+t('KNGeoid24 값 범위: 파일 꼬리의 최소·최대(×1000)와 일치', () => {
+  const g = GL.parseGgf(GGF);
+  let lo = Infinity, hi = -Infinity; for (const v of g.data) { if (v < lo) lo = v; if (v > hi) hi = v; }
+  near(lo, 15.068, 1e-3); near(hi, 33.623, 1e-3);
+});
+t('geoidN: 격자점에서 정확, 중간점은 4점 평균(쌍선형), 영역 밖은 NaN', () => {
+  const g = GL.parseGgf(GGF);
+  // 북쪽 행부터 저장: 0행 = 위도 최대
+  near(GL.geoidN(g, g.latMax, g.lonMin), g.data[0], 1e-6);
+  near(GL.geoidN(g, g.latMax - 100 * g.dLat, g.lonMin + 200 * g.dLon), g.data[100 * g.cols + 200], 1e-4);
+  const la = g.latMax - 100.5 * g.dLat, lo = g.lonMin + 200.5 * g.dLon, a = (r, c) => g.data[r * g.cols + c];
+  near(GL.geoidN(g, la, lo), (a(100, 200) + a(100, 201) + a(101, 200) + a(101, 201)) / 4, 1e-4);
+  assert(Number.isNaN(GL.geoidN(g, 40, 127))); assert(Number.isNaN(GL.geoidN(g, 37, 140))); assert(Number.isNaN(GL.geoidN(g, NaN, 127)));
+});
+t('geoidN: 국내 주요 지점의 지오이드고가 20~31 m 범위, 서울 < 부산', () => {
+  const g = GL.parseGgf(GGF), seoul = GL.geoidN(g, 37.5665, 126.978), busan = GL.geoidN(g, 35.18, 129.07), songsan = GL.geoidN(g, 37.19, 126.74);
+  for (const n of [seoul, busan, songsan]) assert(n > 20 && n < 31, 'N=' + n);
+  assert(seoul < busan);
+});
+t('parseGgf: 헤더가 다른 파일은 거부', () => {
+  assert.throws(() => GL.parseGgf(Buffer.from('not a geoid file at all, definitely too short')));
+});
+t('heightRef: 수신값 그대로 / 국가지오이드 환산', () => {
+  assert.strictEqual(GL.heightRef(23.8, 21.5, 23.0, 'rx'), 23.8);                 // 기본: 수신기 고도를 그대로
+  near(GL.heightRef(23.8, 21.5, 23.0, 'kn'), 23.8 + 21.5 - 23.0, 1e-12);          // GGA: 타원체고 = 고도 + 수신기 지오이드분리, 정표고 = 타원체고 − N
+  near(GL.heightRef(45.0, null, 23.0, 'kn'), 22.0, 1e-12);                         // 폰 고도(분리값 없음)는 타원체고로 간주
+  assert.strictEqual(GL.heightRef(23.8, 21.5, NaN, 'kn'), 23.8);                  // 영역 밖: 환산 못하면 수신값 유지
+  assert(Number.isNaN(GL.heightRef(NaN, 21.5, 23.0, 'kn')));
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
