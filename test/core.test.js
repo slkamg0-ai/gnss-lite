@@ -115,6 +115,66 @@ t('Z 없는 기지점은 수평만 보정 (dz 평균에서 제외)', () => {
 });
 t('보정 없음 = 항등', () => { const p = { n: 1, e: 2, z: 3 }; assert.deepStrictEqual(GL.applyCalibration(null, p), p); });
 
+// 4-파라미터(축척 포함) + 표고 경사면 + 점 끄기
+const mkS = (n, e, k, θ) => ({ n: 1000 + k * (n * Math.cos(θ) - e * Math.sin(θ)) + 3.2, e: 2000 + k * (n * Math.sin(θ) + e * Math.cos(θ)) - 1.1 });   // 기지좌표(n,e) → 측정좌표(축척 k, 회전 θ)
+t('4-파라미터: 축척·회전·이동 복원 (잔차 0)', () => {
+  const k = 1.00012, θ = 0.01, K = [[0, 0], [80, 10], [30, -60], [-40, 50]];
+  const pairs = K.map(([n, e]) => { const m = mkS(n, e, k, θ); return { m: { ...m, z: 10 }, k: { n, e, z: 10 } }; });
+  const T = GL.solveCalibration(pairs, { scale: true });
+  near(T.scale, 1 / k, 1e-9); near(T.rms, 0, 1e-7);
+  const q = GL.applyCalibration(T, pairs[2].m); near(q.n, 30, 1e-6); near(q.e, -60, 1e-6);
+});
+t('축척 옵션 끄면 축척 1 고정 (기존 동작)', () => {
+  const pairs = [[0, 0], [100, 0]].map(([n, e]) => ({ m: { ...mkS(n, e, 1.0005, 0), z: 0 }, k: { n, e, z: 0 } }));
+  const T = GL.solveCalibration(pairs, { scale: false }); assert.strictEqual(T.scale, 1); assert(T.rms > 0.01, '축척 오차가 잔차로 남아야 함');
+});
+t('표고 경사면: 3점 이상에서 기울기 복원 (잔차 0)', () => {
+  const plane = (n, e) => 0.30 + 0.002 * n - 0.001 * e;                        // 지반 경사: 북으로 2 mm/m, 동으로 -1 mm/m
+  const K = [[0, 0], [60, 0], [0, 50], [40, 40]];
+  const pairs = K.map(([n, e]) => ({ m: { n: 1000 + n, e: 2000 + e, z: 20 }, k: { n: 1000 + n, e: 2000 + e, z: 20 + plane(n, e) } }));
+  const T = GL.solveCalibration(pairs, { z: 'plane' });
+  assert.strictEqual(T.zMode, 'plane'); near(T.zRms, 0, 1e-9);
+  const q = GL.applyCalibration(T, { n: 1030, e: 2020, z: 20 }); near(q.z, 20 + plane(30, 20), 1e-9);
+});
+t('표고 auto: 2점 이하면 상수, 3점 이상이면 경사면', () => {
+  const mk = (n, e, dz) => ({ m: { n, e, z: 5 }, k: { n, e, z: 5 + dz } });
+  assert.strictEqual(GL.solveCalibration([mk(0, 0, .1), mk(50, 0, .2)], { z: 'auto' }).zMode, 'const');
+  assert.strictEqual(GL.solveCalibration([mk(0, 0, .1), mk(50, 0, .2), mk(0, 50, .15)], { z: 'auto' }).zMode, 'plane');
+});
+t('표고 경사면: 일직선 기지점은 상수로 대체하고 경고', () => {
+  const mk = (n, dz) => ({ m: { n, e: 0, z: 5 }, k: { n, e: 0, z: 5 + dz } });
+  const T = GL.solveCalibration([mk(0, .1), mk(30, .2), mk(60, .3)], { z: 'plane' });
+  assert.strictEqual(T.zMode, 'const'); assert(/일직선|경사면/.test(T.warn || ''), '경고 필요');
+});
+t('점 끄기(off): 이상점을 제외하고 풀면 잔차가 줄고 제외점 잔차도 계산', () => {
+  const K = [[0, 0], [100, 0], [0, 100], [100, 100]];
+  const pairs = K.map(([n, e], i) => ({ m: { n: 500 + n + (i === 3 ? 0.30 : 0), e: 800 + e, z: 1 }, k: { n: 500 + n, e: 800 + e, z: 1 } }));   // 마지막 점에 30 cm 이상치
+  const all = GL.solveCalibration(pairs, { scale: true }), ok = GL.solveCalibration(pairs, { scale: true, off: [3] });
+  assert(ok.rms < all.rms / 5, '이상치를 빼면 RMS 가 크게 줄어야 함'); assert.strictEqual(ok.res.length, 4); assert(ok.res[3].off === true && Math.abs(ok.res[3].dn) > 0.2, '제외한 점의 잔차(이상치)가 보여야 함');
+});
+t('이상점 자동 탐지: 한 점씩 빼고 풀어 RMS 가 가장 크게 줄어드는 점', () => {
+  const K = [[0, 0], [100, 0], [0, 100], [100, 100], [50, 120]];
+  const pairs = K.map(([n, e], i) => ({ m: { n: 500 + n + (i === 3 ? 0.20 : 0), e: 800 + e, z: 1 }, k: { n: 500 + n, e: 800 + e, z: 1 } }));
+  const o = GL.findOutlier(pairs, { scale: true });
+  assert.strictEqual(o.index, 3); assert(o.gain > 0.5, '이상점을 빼면 RMS 가 절반 이상 줄어야 함'); assert(o.rmsAfter < o.rmsBefore);
+});
+t('이상점 자동 탐지: 이상치가 없거나 점이 4개 미만이면 없음', () => {
+  const clean = [[0, 0], [100, 0], [0, 100], [100, 100], [50, 120]].map(([n, e]) => ({ m: { n: 500 + n, e: 800 + e, z: 1 }, k: { n: 500 + n, e: 800 + e, z: 1 } }));
+  assert.strictEqual(GL.findOutlier(clean, { scale: true }), null);
+  assert.strictEqual(GL.findOutlier(clean.slice(0, 3), { scale: true }), null);
+});
+t('이상점 자동 탐지: 잔차가 이미 5 mm 이하면 부동소수점 잡음으로 지목하지 않는다', () => {
+  const K = [[0, 0], [80, 10], [30, -60], [-40, 50], [60, 90]];
+  const pairs = K.map(([n, e]) => ({ m: { n: 1000 + 1.0002 * n + 0.8, e: 2000 + 1.0002 * e - 0.5, z: 1 }, k: { n: 1000 + n, e: 2000 + e, z: 1 } }));   // 축척만 다르고 점들은 서로 완전히 일관됨
+  assert.strictEqual(GL.findOutlier(pairs, { scale: true }), null);
+  const small = pairs.map((p, i) => i === 2 ? { ...p, m: { ...p.m, n: p.m.n + 0.003 } } : p);   // 3 mm 편차는 무시
+  assert.strictEqual(GL.findOutlier(small, { scale: true }), null);
+});
+t('기지점 1개·Z 없음 등 최소 입력', () => {
+  const T = GL.solveCalibration([{ m: { n: 10.1, e: 20, z: 5.5 }, k: { n: 10, e: 20, z: null } }], { scale: true, z: 'plane' });
+  assert.strictEqual(T.scale, 1); assert.strictEqual(T.zMode, 'const'); near(T.rms, 0, 1e-9);
+});
+
 // ── 6. 통계 / DXF ──
 t('meanSd', () => { const r = GL.meanSd([1, 2, 3, 4, 5]); near(r.mean, 3, 1e-12); near(r.sd, Math.sqrt(2.5), 1e-12); });
 t('DXF 구조', () => {

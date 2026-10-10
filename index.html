@@ -9,7 +9,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon-192.png">
-<link rel="stylesheet" href="style.css?v=11">
+<link rel="stylesheet" href="style.css?v=13">
 </head>
 <body>
 <header id="top">
@@ -252,8 +252,14 @@
     <p class="hint">기지점(맨홀·BM)에 폴을 세우고, 아래에서 그 점을 고른 뒤 “이 위치로 보정”. 1점=평행이동+높이, 2점 이상=회전 포함. 수신기 지오이드(EGM)와 국가 지오이드의 차이도 이 높이 보정으로 흡수됩니다.</p>
     <div class="row gap"><select id="calKnown" aria-label="기지점"></select><button id="calAdd" class="primary sm">이 위치로 보정</button></div>
     <input id="calZ" type="number" step="0.001" inputmode="decimal" placeholder="기지 표고 Z (선택, m) — 비우면 수평만 보정">
+    <div class="form">
+      <label class="chk"><input id="calScale" type="checkbox"> 축척 포함 (4-파라미터, 기지점 2개 이상)</label>
+      <label>높이 보정 방식<select id="calZMode"><option value="auto">자동 (3점 이상이면 경사면)</option><option value="const">평균 오프셋만</option><option value="plane">경사면 (기지점 3개 이상)</option></select></label>
+    </div>
     <div id="calInfo" class="hint"></div>
-    <button id="calReset" class="ghost sm">보정 초기화</button>
+    <div id="calList" class="list"></div>
+    <div class="row gap"><button id="calCopy" class="ghost sm">파라미터 복사</button><button id="calReset" class="ghost sm">보정 초기화</button></div>
+    <p class="hint">잔차가 큰 점(빨간색)은 <b>끄기</b>로 계산에서 빼 보세요. 축척은 도면과 GNSS 투영 좌표의 차이를, 경사면은 지반 경사나 지오이드 경사를 흡수합니다. 기지점이 일직선이거나 너무 가까우면 풀리지 않습니다.</p>
   </div>
 
   <div class="card" id="ttsCard">
@@ -329,9 +335,9 @@
 </nav>
 
 <div id="printArea"></div>
-<script src="core.js?v=6"></script>
+<script src="core.js?v=7"></script>
 <script src="dxf.js?v=6"></script>
 <script src="nlu.js?v=7"></script>
-<script src="app.js?v=17"></script>
+<script src="app.js?v=19"></script>
 </body>
 </html>

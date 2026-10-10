@@ -58,7 +58,10 @@ function refreshAll() { buildStake(); renderSurvey(); renderAreas(); renderSegs(
 if (S.settings.fixSd == null) S.settings.fixSd = 0.03;   // FIXED 로 인정하는 수평 추정 오차 한도(m), 0 이면 끔
 S.settings.tilt = Object.assign({ on: false, decl: -8.5, max: 3, yawOff: 0, axis: null, frame: 'ENU', imuSrc: 'phone' }, S.settings.tilt);
 S.bridge = Object.assign(defState().bridge, S.bridge);
-let CAL = GL.solveCalibration(S.calib.pairs);
+S.settings.calOpts = Object.assign({ scale: false, z: 'auto' }, S.settings.calOpts);   // 현장 보정 옵션: 축척 포함 여부, 높이 방식(auto/const/plane)
+const calOptions = () => ({ scale: !!S.settings.calOpts.scale, z: S.settings.calOpts.z, off: S.calib.pairs.map((p, i) => p.off ? i : -1).filter(i => i >= 0) });
+let CAL = GL.solveCalibration(S.calib.pairs, calOptions());
+function recalCal() { CAL = GL.solveCalibration(S.calib.pairs, calOptions()); dirty = true; }
 const uid = () => Math.random().toString(36).slice(2, 9);
 
 // ───────────── 위치 파이프라인 ─────────────
@@ -700,7 +703,14 @@ function renderSettings() {
   const T = s.tilt; $('#tiltOn').checked = T.on; $('#tiltDecl').value = T.decl; $('#tiltMax').value = T.max; $('#tiltFrame').value = T.frame; $('#tiltSrc').value = T.imuSrc; updateTiltLive(); $('#srcHelp').textContent = SRC_HELP[s.source];
   if (s.source === 'sim') srcStatus('데모 실행 중');
   const known = knownPoints(); $('#calKnown').innerHTML = known.map((k, i) => `<option value="${i}">${esc(k.label)}</option>`).join('');
-  $('#calInfo').innerHTML = CAL ? `보정 ${S.calib.pairs.length}쌍 · 이동 dN ${fSign(CAL.tn - CAL.cn, 3)} dE ${fSign(CAL.te - CAL.ce, 3)} · dZ ${fSign(CAL.dz, 3)} · 회전 ${(CAL.rot * 206264.806).toFixed(1)}″ · RMS ${(CAL.rms * 100).toFixed(1)} cm` : '보정 없음';
+  $('#calScale').checked = !!S.settings.calOpts.scale; $('#calZMode').value = S.settings.calOpts.z;
+  $('#calInfo').textContent = CAL ? calSummary() : '보정 없음';
+  const sus = CAL ? GL.findOutlier(S.calib.pairs, calOptions()) : null;   // 한 점씩 빼 보고 RMS 가 크게 줄면 그 점이 의심 점
+  if (sus) $('#calInfo').textContent += ` ⚠ 의심 점: ${S.calib.pairs[sus.index].name || '기지점 ' + (sus.index + 1)} (빼면 RMS ${(sus.rmsBefore * 100).toFixed(1)} → ${(sus.rmsAfter * 100).toFixed(1)} cm)`;
+  $('#calList').innerHTML = !CAL ? '' : S.calib.pairs.map((p, i) => {
+    const r = CAL.res[i], h = Math.hypot(r.dn, r.de) * 100, bad = !r.off && (sus ? sus.index === i : h > Math.max(3, 3 * CAL.rms * 100));
+    return `<div class="it${bad ? ' B' : ''}" data-ci="${i}" style="${r.off ? 'opacity:.5' : ''}"><div class="nm"><b>${esc(p.name || '기지점 ' + (i + 1))}</b><span style="${bad ? 'color:#dc2626;font-weight:600' : ''}">수평 ${h.toFixed(1)} cm${r.dz != null ? ' · 높이 ' + fSign(r.dz * 100, 1) + ' cm' : ''}${r.off ? ' · 계산에서 뺌' : bad ? ' · 큼' : ''}</span></div><button class="ghost sm" data-cact="off">${r.off ? '켜기' : '끄기'}</button><button class="ghost sm danger" data-cact="del">삭제</button></div>`;
+  }).join('');
   $('#verLbl').textContent = 'GNSS-Lite v' + VER + ' · 데이터는 이 기기 브라우저에만 저장됩니다.'; renderLog(); renderLlm(); renderTts();
 }
 function updateTiltLive() {
@@ -764,13 +774,35 @@ $('#ntSave').onclick = () => {
   } catch (e) { toast('저장 실패: ' + e.message); }
 };
 $('#ntStop').onclick = () => { if (NATIVE) { try { NATIVE.ntripStop(); } catch (e) {} } };
+function calSummary() {
+  const C = CAL, k = (C.scale - 1) * 1e6, parts = [`기지점 ${C.n}/${S.calib.pairs.length}개 사용`,
+    `이동 dN ${fSign(C.tn - C.cn, 3)} dE ${fSign(C.te - C.ce, 3)} m`, `회전 ${(C.rot * 206264.806).toFixed(1)}″`];
+  if (S.settings.calOpts.scale) parts.push(`축척 ${C.scale.toFixed(8)} (${k >= 0 ? '+' : ''}${k.toFixed(1)} ppm)`);
+  parts.push(C.zMode === 'plane' ? `높이 경사면 ${fSign(C.zA * 1000, 2)} mm/m(북) ${fSign(C.zB * 1000, 2)} mm/m(동), 평균 ${fSign(C.dz, 3)} m` : `높이 평균 ${fSign(C.dz, 3)} m`);
+  parts.push(`RMS 수평 ${(C.rms * 100).toFixed(1)} cm` + (C.zRms ? ` · 높이 ${(C.zRms * 100).toFixed(1)} cm` : ''));
+  return parts.join(' · ') + (C.warn ? ' ⚠ ' + C.warn : '') + (C.n < 2 ? ' · 1점은 평행이동만(회전·축척 없음)' : '');
+}
+$('#calScale').onchange = e => { S.settings.calOpts.scale = e.target.checked; save(); recalCal(); renderSettings(); };
+$('#calZMode').onchange = e => { S.settings.calOpts.z = e.target.value; save(); recalCal(); renderSettings(); };
+$('#calList').onclick = e => {
+  const b = e.target.closest('button[data-cact]'), row = e.target.closest('[data-ci]'); if (!b || !row) return;
+  const i = +row.dataset.ci, p = S.calib.pairs[i]; if (!p) return;
+  if (b.dataset.cact === 'off') p.off = !p.off; else S.calib.pairs.splice(i, 1);
+  save(); S.calib.pairs.length ? recalCal() : (CAL = null, dirty = true); renderSettings();
+};
+$('#calCopy').onclick = async () => {
+  if (!CAL) return toast('보정이 없습니다');
+  const o = S.settings.calOpts, lines = ['GNSS-Lite 현장 보정 파라미터', calSummary(), '방식: ' + (o.scale ? '4-파라미터(축척 포함)' : '회전+이동') + ', 높이 ' + CAL.zMode,
+    ...S.calib.pairs.map((p, i) => { const r = CAL.res[i]; return `${i + 1}. ${p.name || ''}${r.off ? ' (뺌)' : ''} 측정 N ${p.m.n.toFixed(3)} E ${p.m.e.toFixed(3)} Z ${isFinite(p.m.z) ? p.m.z.toFixed(3) : '-'} → 기지 N ${p.k.n.toFixed(3)} E ${p.k.e.toFixed(3)} Z ${p.k.z != null ? p.k.z.toFixed(3) : '-'} · 잔차 ${(r.dn * 100).toFixed(1)}/${(r.de * 100).toFixed(1)} cm`; })];
+  try { await navigator.clipboard.writeText(lines.join('\n')); toast('보정 파라미터를 복사했습니다'); } catch (er) { toast('복사 실패 — 화면을 캡처하세요'); }
+};
 $('#calAdd').onclick = async () => {
   const k = knownPoints()[+$('#calKnown').value]; if (!k) return toast('기지점이 없습니다');
   try {
     const r = await measure(), zin = $('#calZ').value, kz = zin !== '' ? +zin : k.z;
     logShot('calib', r, { known: k.label });
     S.calib.pairs.push({ m: r.raw, k: { n: k.n, e: k.e, z: kz == null ? null : kz }, name: k.label });
-    CAL = GL.solveCalibration(S.calib.pairs); save(); renderSettings(); buzz([40, 40, 40]); toast('보정 적용 (' + S.calib.pairs.length + '쌍)');
+    recalCal(); save(); renderSettings(); buzz([40, 40, 40]); toast('보정 적용 (' + S.calib.pairs.length + '쌍)' + (CAL && CAL.warn ? ' — ' + CAL.warn : ''));
   } catch (e) { toast(e.message); }
 };
 $('#calReset').onclick = () => { S.calib.pairs = []; CAL = null; save(); renderSettings(); toast('보정 초기화'); };
@@ -1401,6 +1433,38 @@ function startListen() {
   } catch (e) { REC = null; toast('음성 인식을 시작할 수 없습니다: ' + e.message); }
 }
 function openSheet(listen) { gv('vsheet').hidden = false; gv('vGuide').checked = S.settings.voiceGuide; if (listen) startListen(); }
+// ── 마이크 버튼 이동: 8px 이상 끌면 위치만 옮기고(탭은 그대로 음성 명령), 더블탭하면 원위치. 위치는 화면 대비 비율로 저장해 회전·크기 변화에도 화면 안에 둔다.
+(function micDrag() {
+  const b = gv('micBtn'); let st = null, moved = false, lastTap = 0;
+  const place = (l, t) => {   // l,t: 화면 대비 왼쪽/위쪽 비율(버튼의 왼쪽 위 모서리). 위는 헤더 아래, 아래는 하단 탭 위까지만.
+    const W = innerWidth, H = innerHeight, w = b.offsetWidth, h = b.offsetHeight, top = (gv('top') ? gv('top').getBoundingClientRect().bottom : 0) + 4, nav = gv('tabs') ? gv('tabs').getBoundingClientRect().height : 60;
+    const x = Math.min(Math.max(l * W, 4), W - w - 4), y = Math.min(Math.max(t * H, top), H - h - nav - 4);
+    b.style.left = x + 'px'; b.style.top = y + 'px'; b.style.right = 'auto'; b.style.bottom = 'auto';
+  };
+  const apply = () => { const p = S.settings.micPos; if (p) place(p.l, p.t); else { b.style.left = b.style.top = b.style.right = b.style.bottom = ''; } };
+  b.style.touchAction = 'none';
+  b.addEventListener('pointerdown', e => { st = { x: e.clientX, y: e.clientY, r: b.getBoundingClientRect(), id: e.pointerId }; moved = false; });
+  b.addEventListener('pointermove', e => {
+    if (!st || e.pointerId !== st.id) return;
+    const dx = e.clientX - st.x, dy = e.clientY - st.y;
+    if (!moved && Math.hypot(dx, dy) < 8) return;
+    if (!moved) { moved = true; try { b.setPointerCapture(e.pointerId); } catch (x) {} }
+    place((st.r.left + dx) / innerWidth, (st.r.top + dy) / innerHeight);
+  });
+  const end = e => {
+    if (!st || e.pointerId !== st.id) return;
+    if (moved) { const r = b.getBoundingClientRect(); S.settings.micPos = { l: r.left / innerWidth, t: r.top / innerHeight }; save(); b.dataset.dragged = '1'; setTimeout(() => { delete b.dataset.dragged; }, 350); }
+    st = null;
+  };
+  b.addEventListener('pointerup', end); b.addEventListener('pointercancel', end);
+  b.addEventListener('click', e => {   // 끌어서 옮긴 직후의 클릭은 무시. 350ms 안의 두 번째 탭은 원위치.
+    if (b.dataset.dragged) { e.stopImmediatePropagation(); e.preventDefault(); return; }
+    const now = Date.now(); if (now - lastTap < 350 && S.settings.micPos) { delete S.settings.micPos; save(); apply(); toast('마이크를 원위치로 돌렸습니다'); e.stopImmediatePropagation(); lastTap = 0; return; }
+    lastTap = now;
+  }, true);
+  addEventListener('resize', apply); addEventListener('orientationchange', () => setTimeout(apply, 250));
+  window.__micApply = apply; apply();
+})();
 gv('micBtn').onclick = () => {
   if (S.settings.hf.on && !HF.run) { hfBeep(660, 80); hfStart(); gv('vsheet').hidden = false; return; }      // 핸즈프리를 켜 둔 상태에서 앱을 다시 열면 🎤 한 번으로 재개(브라우저 정책상 사용자 터치 필요)
   if (gv('vsheet').hidden) openSheet(!HF.run); else if (REC) startListen(); else openSheet(!HF.run);

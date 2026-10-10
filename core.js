@@ -271,32 +271,75 @@
     return { mean: m, sd: n > 1 ? Math.sqrt(arr.reduce((s, v) => s + (v - m) ** 2, 0) / (n - 1)) : 0, n };
   }
 
-  // ───────────── 현장 보정 (2D 회전+이동 + Z 오프셋) ─────────────
-  // pairs: [{m:{n,e,z}, k:{n,e,z}}]  m=측정(원시), k=기지값. 1쌍=평행이동, 2쌍이상=회전+이동.
-  function solveCalibration(pairs) {
+  // ───────────── 현장 보정 (2D 유사변환 + 표고 보정) ─────────────
+  // pairs: [{m:{n,e,z}, k:{n,e,z}}]  m=측정(원시), k=기지값. 1쌍=평행이동, 2쌍이상=회전+이동(+축척).
+  // opts.scale: true 면 축척까지 푼다(4-파라미터). 기본 false(축척 1 고정).
+  // opts.z: 'const'(평균 오프셋) | 'plane'(경사면, 표고가 있는 기지점 3개 이상) | 'auto'(3개 이상이면 경사면). 기본 'const'.
+  // opts.off: 계산에서 뺄 점 인덱스 목록(이상점). 뺀 점도 잔차는 계산해 보여 준다.
+  function solveCalibration(pairs, opts) {
     if (!pairs.length) return null;
-    const cm = { n: 0, e: 0 }, ck = { n: 0, e: 0 };
-    pairs.forEach(p => { cm.n += p.m.n; cm.e += p.m.e; ck.n += p.k.n; ck.e += p.k.e; });
-    cm.n /= pairs.length; cm.e /= pairs.length; ck.n /= pairs.length; ck.e /= pairs.length;
-    let rot = 0;
-    if (pairs.length >= 2) {
-      let s = 0, c = 0;
-      pairs.forEach(p => {
+    opts = opts || {};
+    const off = new Set(opts.off || []), use = pairs.map((p, i) => ({ p, i })).filter(o => !off.has(o.i)).map(o => o.p);
+    if (!use.length) return null;
+    const N = use.length, cm = { n: 0, e: 0 }, ck = { n: 0, e: 0 };
+    use.forEach(p => { cm.n += p.m.n; cm.e += p.m.e; ck.n += p.k.n; ck.e += p.k.e; });
+    cm.n /= N; cm.e /= N; ck.n /= N; ck.e /= N;
+    let rot = 0, scale = 1;
+    if (N >= 2) {
+      let s = 0, c = 0, d = 0;
+      use.forEach(p => {
         const a = p.m.n - cm.n, b = p.m.e - cm.e, x = p.k.n - ck.n, y = p.k.e - ck.e;
-        c += a * x + b * y; s += a * y - b * x;
+        c += a * x + b * y; s += a * y - b * x; d += a * a + b * b;
       });
       rot = Math.atan2(s, c);
+      if (opts.scale && d > 0) scale = Math.hypot(c, s) / d;   // 복소수 최소제곱: λ = Σ conj(u)·v / Σ|u|²,  축척 = |λ|
     }
-    const hasZ = p => p.k.z != null && isFinite(p.k.z) && isFinite(p.m.z), zp = pairs.filter(hasZ);   // k.z 없는 기지점은 수평 보정에만 사용
-    const T = { rot, cn: cm.n, ce: cm.e, tn: ck.n, te: ck.e, dz: zp.length ? zp.reduce((s, p) => s + (p.k.z - p.m.z), 0) / zp.length : 0 };
-    T.res = pairs.map(p => { const q = applyCalibration(T, p.m); return { dn: q.n - p.k.n, de: q.e - p.k.e, dz: hasZ(p) ? q.z - p.k.z : null }; });
-    T.rms = Math.sqrt(T.res.reduce((s, r) => s + r.dn ** 2 + r.de ** 2, 0) / T.res.length);
+    const hasZ = p => p.k.z != null && isFinite(p.k.z) && isFinite(p.m.z), zp = use.filter(hasZ);   // k.z 없는 기지점은 수평 보정에만 사용
+    const T = { rot, scale, cn: cm.n, ce: cm.e, tn: ck.n, te: ck.e, dz: zp.length ? zp.reduce((s, p) => s + (p.k.z - p.m.z), 0) / zp.length : 0, zMode: 'const', zA: 0, zB: 0, warn: '' };
+    // 표고: 경사면  dz = dz0 + zA·(n−cn) + zB·(e−ce)  (측정 좌표 기준)
+    const wantPlane = opts.z === 'plane' || (opts.z === 'auto' && zp.length >= 3);
+    if (wantPlane) {
+      if (zp.length < 3) T.warn = '경사면 보정에는 표고가 있는 기지점 3개 이상이 필요합니다 → 높이는 평균 오프셋으로 보정합니다';
+      else {
+        let snn = 0, see = 0, sne = 0, snz = 0, sez = 0;
+        zp.forEach(p => { const a = p.m.n - cm.n, b = p.m.e - cm.e, v = p.k.z - p.m.z - T.dz; snn += a * a; see += b * b; sne += a * b; snz += a * v; sez += b * v; });
+        const det = snn * see - sne * sne;
+        if (!(det > 1e-6 * Math.max(snn * see, 1e-12))) T.warn = '표고 기지점이 일직선에 가까워 경사면을 풀 수 없습니다 → 높이는 평균 오프셋으로 보정합니다';
+        else { T.zA = (snz * see - sez * sne) / det; T.zB = (sez * snn - snz * sne) / det; T.zMode = 'plane'; }
+      }
+    }
+    const rz = [];
+    T.res = pairs.map((p, i) => {
+      const q = applyCalibration(T, p.m), z = hasZ(p) ? q.z - p.k.z : null;
+      if (z != null && !off.has(i)) rz.push(z);
+      return { dn: q.n - p.k.n, de: q.e - p.k.e, dz: z, off: off.has(i) };
+    });
+    const on = T.res.filter(r => !r.off);
+    T.rms = Math.sqrt(on.reduce((s, r) => s + r.dn ** 2 + r.de ** 2, 0) / on.length);
+    T.zRms = rz.length ? Math.sqrt(rz.reduce((s, v) => s + v * v, 0) / rz.length) : 0;
+    T.n = N;
     return T;
+  }
+  // 이상점 탐지: 사용 중인 기지점이 4개 이상일 때, 한 점씩 빼고 다시 풀어 RMS 가 가장 크게 줄어드는 점을 찾는다.
+  // 반환 {index, rmsBefore, rmsAfter, gain}  (gain = 줄어든 비율). 현재 RMS 의 50% 이상 줄지 않으면 이상점 없음(null).
+  function findOutlier(pairs, opts) {
+    opts = opts || {};
+    const off = new Set(opts.off || []), idx = pairs.map((p, i) => i).filter(i => !off.has(i));
+    if (idx.length < 4) return null;
+    const base = solveCalibration(pairs, opts); if (!base || !(base.rms > 0.005)) return null;   // 잔차가 이미 5 mm 이하면 현장에서 문제 삼을 이유가 없고, 비율 계산이 부동소수점 잡음에 흔들린다
+    let best = null;
+    idx.forEach(i => {
+      const T = solveCalibration(pairs, Object.assign({}, opts, { off: [...off, i] }));
+      if (T && (!best || T.rms < best.rmsAfter)) best = { index: i, rmsBefore: base.rms, rmsAfter: T.rms };
+    });
+    if (!best) return null;
+    best.gain = 1 - best.rmsAfter / best.rmsBefore;
+    return best.gain >= 0.5 ? best : null;
   }
   function applyCalibration(T, p) {
     if (!T) return { n: p.n, e: p.e, z: p.z };
-    const a = p.n - T.cn, b = p.e - T.ce, c = Math.cos(T.rot), s = Math.sin(T.rot);
-    return { n: T.tn + a * c - b * s, e: T.te + a * s + b * c, z: p.z + T.dz };
+    const a = p.n - T.cn, b = p.e - T.ce, c = Math.cos(T.rot), s = Math.sin(T.rot), k = T.scale == null ? 1 : T.scale;
+    return { n: T.tn + k * (a * c - b * s), e: T.te + k * (a * s + b * c), z: p.z + T.dz + (T.zA || 0) * a + (T.zB || 0) * b };
   }
 
   // ───────────── DXF (R12 ASCII: AutoCAD/BricsCAD/ZWCAD 모두 열림) ─────────────
@@ -364,6 +407,6 @@
   }
 
   const api = { CRS, toProjected, fromProjected, parseNmea, nmeaChecksumOk, nmeaChecksumAppend, makeLineBuffer, fixClass, fixFromAccuracy,
-    qMul, qConj, qNorm, qRot, qToEnu, qFromDeviceOrientation, poleAxisFromLevel, tiltInfo, tiltCompensate, allowedTilt, yawOffsetFrom, azimuth, pairInfo, staName, makeStations, makeAlignment, alignInfo, polyStats, guide, cutFill, markText, meanSd, solveCalibration, applyCalibration, dxfBuilder, hyp };
+    qMul, qConj, qNorm, qRot, qToEnu, qFromDeviceOrientation, poleAxisFromLevel, tiltInfo, tiltCompensate, allowedTilt, yawOffsetFrom, azimuth, pairInfo, staName, makeStations, makeAlignment, alignInfo, polyStats, guide, cutFill, markText, meanSd, solveCalibration, applyCalibration, findOutlier, dxfBuilder, hyp };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.GL = api;
 })(typeof window !== 'undefined' ? window : globalThis);
