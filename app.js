@@ -57,6 +57,7 @@ function undo() {
 function refreshAll() { buildStake(); renderSurvey(); renderAreas(); renderSegs(); dirty = true; }
 if (S.settings.fixSd == null) S.settings.fixSd = 0.03;   // FIXED 로 인정하는 수평 추정 오차 한도(m), 0 이면 끔
 if (S.settings.beepGuide == null) Object.assign(S.settings, { beepGuide: false, beepVol: 0.7, beepStart: 5 });   // 소리 안내(근접 비프): 시작 거리 m, 볼륨 0.1~1
+if (S.settings.fixCheer == null) S.settings.fixCheer = true;   // FIXED 가 되면 한 번 유쾌하게 알림(차임 + 한마디)
 if (S.settings.hRef == null) S.settings.hRef = 'rx';      // 높이 기준: 'rx' 수신기 고도 그대로 / 'kn' 국가지오이드(KNGeoid24) 정표고
 
 // 국가지오이드 격자(약 700 KB): 높이 기준을 'kn' 으로 쓸 때만 내려받는다(서비스워커가 캐시하므로 오프라인에서도 동작)
@@ -79,6 +80,12 @@ function recalCal() { CAL = GL.solveCalibration(S.calib.pairs, calOptions()); di
 const uid = () => Math.random().toString(36).slice(2, 9);
 
 // ───────────── 위치 파이프라인 ─────────────
+// 화면 갱신 중 한 부분이 예외를 던져도 갱신 루프가 멈추지 않게 감싸고, 최근 오류를 진단 복사에 남긴다
+const ERRS = [];
+function noteErr(m) { if (!ERRS.length || ERRS[ERRS.length - 1].m !== m) { ERRS.push({ t: Date.now(), m }); if (ERRS.length > 5) ERRS.shift(); } }
+function guard(tag, fn) { try { fn(); } catch (e) { noteErr(tag + ': ' + ((e && e.message) || e)); } }
+window.addEventListener('error', e => noteErr('js: ' + e.message + (e.lineno ? ' @' + e.lineno : '')));
+window.addEventListener('unhandledrejection', e => noteErr('promise: ' + ((e.reason && e.reason.message) || e.reason)));
 let L = null;            // 최신 에포크 {lat,lon,alt,fix,sats,hdop,sdH,sdV,src,raw,site,t}
 let sampler = null, dirty = true, tab = 'stake';
 let IMU = null, imuTap = null;   // imuTap: IMU 수신 이벤트 훅(캘리브레이션 수집)
@@ -138,7 +145,8 @@ function diagReport() {
     `설정: 소스=${s.source} 좌표계=${s.crs} 높이기준=${s.hRef}(${hRefText().replace(/^현재: /, '')}) 안테나높이=${s.antH} 평균=${s.avgSec}s 허용오차=${s.tol} FIXED만측량=${s.reqFix} 기울기보정=${s.tilt.on}(${s.tilt.imuSrc})`,
     '위치 소스 상태: ' + ($('#srcStatus') ? $('#srcStatus').textContent : '–'), '경고: ' + warn,
     d ? `최근 60초: 갱신 ${d.n}회(${f(d.hz, 2)} Hz, 최대 간격 ${f(d.dtMax, 1)}s, 마지막 갱신 ${f(d.ageLast, 1)}s 전), FIXED ${f(d.fixedPct, 0)}%, 수평정확도 최소/최대/마지막 ${cm(d.sdMin)}/${cm(d.sdMax)}/${cm(d.sdLast)} cm, 고도 포함 ${f(d.altPct, 0)}%` : '최근 60초: 위치 수신 없음',
-    'Fix 통계: ' + fsText(), '마지막 측정: ' + (DG.lastSampErr ? '실패 — ' + DG.lastSampErr : DG.lastSampOk || '(없음)')].join('\n');
+    'Fix 통계: ' + fsText(), '마지막 측정: ' + (DG.lastSampErr ? '실패 — ' + DG.lastSampErr : DG.lastSampOk || '(없음)'),
+    '최근 오류: ' + (ERRS.length ? ERRS.map(e => new Date(e.t).toLocaleTimeString('ko-KR') + ' ' + e.m).join(' | ') : '없음')].join('\n');
 }
 function onEpoch(ep) {
   const p = GL.toProjected(S.settings.crs, ep.lat, ep.lon), alt = ep.alt == null ? NaN : ep.alt;
@@ -146,9 +154,9 @@ function onEpoch(ep) {
   const r = computeRaw(p, GL.heightRef(alt, ep.geoid, N, S.settings.hRef));
   L = Object.assign({}, ep, { raw: r.raw, tilt: r.tilt, site: GL.applyCalibration(CAL, r.raw), N, t: Date.now() });
   fsFeed(ep.fix, L.t); dgFeed(ep, L.t);
-  logEpoch(L);
-  if (sampler) feedSampler();
   dirty = true;
+  guard('기록', () => logEpoch(L));
+  if (sampler) guard('측정', feedSampler);
 }
 
 // ── 소스: 데모(가상) ──
@@ -305,8 +313,14 @@ window.glNative = {
   onNmea(text) { if (S.settings.source !== 'native') return; String(text).split('\n').forEach(l => { if (l) handleNmea(l); }); },
   onStatus(json) { try { NST = JSON.parse(json); } catch (e) { return; } if (S.settings.source === 'native') srcStatus(nativeStatusText(NST)); },
 };
+let NPOLL = null;   // 네이티브 상태(NMEA 줄 수·RTCM KB)는 상태가 바뀔 때만 푸시되므로 1.5초마다 직접 읽어 갱신한다
+function nativePoll() {
+  clearInterval(NPOLL);
+  NPOLL = setInterval(() => { try { NST = JSON.parse(NATIVE.status()); if (S.settings.source === 'native') srcStatus(nativeStatusText(NST)); } catch (e) { noteErr('상태: ' + e.message); } }, 1500);
+}
 function nativeStart() {
   if (!NATIVE) { srcStatus('이 소스는 Android 앱에서만 쓸 수 있습니다'); return; }
+  nativePoll();
   try {
     const c = JSON.parse(NATIVE.ntripLoad() || '{}');
     if (c.host) { $('#ntHost').value = c.host; $('#ntPort').value = c.port; $('#ntMount').value = c.mount; $('#ntUser').value = c.user; }
@@ -316,7 +330,7 @@ function nativeStart() {
     NST = JSON.parse(NATIVE.status()); srcStatus(nativeStatusText(NST));
   } catch (e) { srcStatus('내장 USB 오류: ' + e.message); }
 }
-function nativeStop() { if (!NATIVE) return; try { NATIVE.ntripStop(); NATIVE.disconnectUsb(); } catch (e) {} }
+function nativeStop() { clearInterval(NPOLL); if (!NATIVE) return; try { NATIVE.ntripStop(); NATIVE.disconnectUsb(); } catch (e) {} }
 
 // ───────────── 평균 측정 ─────────────
 function sample(sec) {
@@ -526,10 +540,10 @@ const fmtR = v => v < 1 ? (v * 100).toFixed(0) + 'cm' : v + 'm';
 function drawBull(d) {
   const { c, w, h } = ctx2d($('#bull')); c.clearRect(0, 0, w, h); if (!w) return;
   const cx = w / 2, cy = h / 2; c.font = '600 12px system-ui'; c.textBaseline = 'middle';
-  if (!d) { c.fillStyle = '#5b6b64'; c.textAlign = 'center'; c.fillText('위치 수신 대기…', cx, cy); return; }
+  if (!d) { c.fillStyle = '#5e6a4f'; c.textAlign = 'center'; c.fillText('위치 수신 대기…', cx, cy); return; }
   const { g, t, tol } = d, isLine = t.mode === 'line', ox = -g.right, oy = -g.fwd;         // 현재 − 목표 (우측, 진행방향)
   const need = Math.max(Math.abs(ox), Math.abs(oy)) * 1.15, range = NICE.find(v => v >= need) || 1000, sc = (Math.min(w, h) / 2 - 22) / range;
-  c.strokeStyle = '#d3dbd7'; c.fillStyle = '#5b6b64'; c.lineWidth = 1; c.textAlign = 'left';
+  c.strokeStyle = '#d9dfc9'; c.fillStyle = '#5e6a4f'; c.lineWidth = 1; c.textAlign = 'left';
   for (let k = 1; k <= 4; k++) { c.beginPath(); c.arc(cx, cy, range / 4 * k * sc, 0, 7); c.stroke(); c.fillText(fmtR(range / 4 * k), cx + 4, cy - range / 4 * k * sc + 8); }
   c.beginPath(); c.moveTo(cx, 4); c.lineTo(cx, h - 4); c.moveTo(4, cy); c.lineTo(w - 4, cy); c.stroke();
   if (isLine) {
@@ -539,20 +553,20 @@ function drawBull(d) {
       c.strokeStyle = '#2563eb'; c.beginPath(); c.moveTo(cx - 9, y); c.lineTo(cx + 9, y); c.stroke();
       if (Math.abs(y - lastLbl) >= 15) { c.fillStyle = '#2563eb'; c.fillText(s.name.replace('STA', ''), cx + 12, y); lastLbl = y; } });
   }
-  c.strokeStyle = '#16a34a'; c.fillStyle = '#16a34a22'; c.lineWidth = 2; const rt = Math.max(tol * sc, 7);
+  c.strokeStyle = '#5aa02c'; c.fillStyle = '#5aa02c22'; c.lineWidth = 2; const rt = Math.max(tol * sc, 7);
   c.beginPath(); c.arc(cx, cy, rt, 0, 7); c.fill(); c.stroke(); c.beginPath(); c.moveTo(cx - rt - 6, cy); c.lineTo(cx + rt + 6, cy); c.moveTo(cx, cy - rt - 6); c.lineTo(cx, cy + rt + 6); c.stroke();
-  const px = cx + ox * sc, py = cy - oy * sc, col = L.fix === 'FIXED' ? '#15803d' : L.fix === 'FLOAT' ? '#d97706' : '#b91c1c';
+  const px = cx + ox * sc, py = cy - oy * sc, col = L.fix === 'FIXED' ? '#4f9a1f' : L.fix === 'FLOAT' ? '#d4651a' : '#b91c1c';
   if (L.sdH) { c.fillStyle = col + '22'; c.beginPath(); c.arc(px, py, Math.max(L.sdH * sc, 3), 0, 7); c.fill(); }
   c.strokeStyle = col; c.lineWidth = 1; c.setLineDash([4, 4]); c.beginPath(); c.moveTo(px, py); c.lineTo(cx, cy); c.stroke(); c.setLineDash([]);
   c.fillStyle = col; c.strokeStyle = '#fff'; c.lineWidth = 2.5; c.beginPath(); c.arc(px, py, 8, 0, 7); c.fill(); c.stroke();
   const endName = isLine ? (t.sg.pts[t.sg.pts.length - 1].name || '종점') : '';
-  c.fillStyle = '#0d1b16'; c.textAlign = 'center'; c.fillText(isLine ? '▲ ' + endName + ' 방향' : '▲ 북', cx, 12);
+  c.fillStyle = '#1b2312'; c.textAlign = 'center'; c.fillText(isLine ? '▲ ' + endName + ' 방향' : '▲ 북', cx, 12);
   c.textAlign = 'right'; c.fillText('격자 ' + fmtR(range / 4), w - 6, h - 10);
   const tl = L.tilt;                                                    // 수준기(버블): 바깥 원 = 허용 기울기, 점 = 안테나가 기울어진 방향
   if (tl && !tl.missing) { const bx = 34, by = h - 34, R = 24, rel = (tl.az - d.lineAz) * Math.PI / 180, k = Math.min(tl.theta / tl.lim, 1.3) * R;
-    c.fillStyle = '#fffd'; c.beginPath(); c.arc(bx, by, R + 4, 0, 7); c.fill(); c.strokeStyle = tl.ok ? '#16a34a' : '#b91c1c'; c.lineWidth = 2; c.beginPath(); c.arc(bx, by, R, 0, 7); c.stroke();
+    c.fillStyle = '#fffd'; c.beginPath(); c.arc(bx, by, R + 4, 0, 7); c.fill(); c.strokeStyle = tl.ok ? '#5aa02c' : '#b91c1c'; c.lineWidth = 2; c.beginPath(); c.arc(bx, by, R, 0, 7); c.stroke();
     c.lineWidth = 1; c.beginPath(); c.moveTo(bx - R, by); c.lineTo(bx + R, by); c.moveTo(bx, by - R); c.lineTo(bx, by + R); c.stroke();
-    c.fillStyle = tl.ok ? '#16a34a' : '#b91c1c'; c.beginPath(); c.arc(bx + Math.sin(rel) * k, by - Math.cos(rel) * k, 5, 0, 7); c.fill(); }
+    c.fillStyle = tl.ok ? '#5aa02c' : '#b91c1c'; c.beginPath(); c.arc(bx + Math.sin(rel) * k, by - Math.cos(rel) * k, 5, 0, 7); c.fill(); }
 }
 
 $('#btnShot').onclick = async () => {
@@ -603,8 +617,9 @@ function renderSurvey() {
   $('#ptCount').textContent = `(${S.points.length})`;
   $('#ptList').innerHTML = S.points.map(p => `<div class="it ${AB[0] === p.id ? 'A' : AB[1] === p.id ? 'B' : ''}" data-id="${p.id}">
     <div class="nm"><b>${AB[0] === p.id ? '[A] ' : AB[1] === p.id ? '[B] ' : ''}${esc(p.name)}${p.src === 'sim' ? '<span class="tag sim">SIM</span>' : ''}${p.code ? '<span class="tag">' + esc(p.code) + '</span>' : ''}</b>
-    <span>N ${f3(p.n)} · E ${f3(p.e)} · Z ${f3(p.z)}${p.sdH != null ? ' · σ' + (p.sdH * 100).toFixed(1) + 'cm' : ''}</span></div>
-    <button class="ghost sm" data-find="${p.id}">찾기</button><button class="ghost sm" data-area="${p.id}">면적+</button><button class="ghost sm" data-del="${p.id}" aria-label="삭제">✕</button></div>`).join('') || '<p class="hint">측량한 점이 없습니다. 위 버튼으로 현재 위치를 측량하세요.</p>';
+</div>
+    <button class="ghost sm" data-find="${p.id}">찾기</button><button class="ghost sm" data-area="${p.id}">면적+</button><button class="ghost sm" data-del="${p.id}" aria-label="삭제">✕</button>
+    <div class="xyz"><span>N ${f3(p.n)}</span><span>E ${f3(p.e)}</span><span>Z ${f3(p.z)}</span>${p.sdH != null ? '<span>σ ' + (p.sdH * 100).toFixed(1) + ' cm</span>' : ''}</div></div>`).join('') || '<p class="hint">측량한 점이 없습니다. 위 버튼으로 현재 위치를 측량하세요.</p>';
   const A = S.points.find(p => p.id === AB[0]), B = S.points.find(p => p.id === AB[1]), m = $('#measure');
   m.hidden = !A;
   if (A && !B) m.innerHTML = '<b>A: ' + esc(A.name) + '</b> — 비교할 B점을 목록에서 탭하세요';
@@ -649,7 +664,7 @@ function renderAreas() {
   box.innerHTML = a.closed ? (a.pts.length >= 3 ? `<div class="grid"><div><small>면적</small><b>${r.area.toFixed(2)} ㎡</b></div><div><small>ha / 평</small><b>${r.ha.toFixed(4)} / ${r.pyeong.toFixed(1)}</b></div>
       <div><small>둘레</small><b>${r.perimeter.toFixed(3)} m</b></div><div><small>중심 N/E</small><b>${r.centroid.n.toFixed(1)} / ${r.centroid.e.toFixed(1)}</b></div></div>` : '<p class="hint">꼭짓점 3개 이상 필요</p>')
     : `<div class="grid"><div><small>연장</small><b>${r.length.toFixed(3)} m</b></div><div><small>꼭짓점</small><b>${r.count}</b></div></div>`;
-  lst.innerHTML = a.pts.map((p, i) => `<div class="it"><div class="nm"><b>${i + 1}. ${esc(p.name)}</b><span>N ${f3(p.n)} · E ${f3(p.e)}${p.z != null ? ' · Z ' + f3(p.z) : ''}</span></div><button class="ghost sm" data-adel="${i}" aria-label="삭제">✕</button></div>`).join('');
+  lst.innerHTML = a.pts.map((p, i) => `<div class="it"><div class="nm"><b>${i + 1}. ${esc(p.name)}</b></div><button class="ghost sm" data-adel="${i}" aria-label="삭제">✕</button><div class="xyz"><span>N ${f3(p.n)}</span><span>E ${f3(p.e)}</span>${p.z != null ? '<span>Z ' + f3(p.z) + '</span>' : ''}</div></div>`).join('');
 }
 $('#areaSel').onchange = e => { S.areaCur = e.target.value; save(); renderAreas(); };
 $('#areaNew').onclick = () => { newArea(); renderAreas(); };
@@ -664,7 +679,7 @@ $('#areaPts').onclick = e => { const b = e.target.closest('[data-adel]'), a = ar
 // ───────────── 선형 편집 ─────────────
 const num = v => v === '' ? 0 : +v;
 function renderSegs() {
-  const opts = '<option value="">점 목록에서 꼭짓점 추가…</option>' + S.points.map(p => `<option value="${p.id}">${esc(p.name)} (${f3(p.n)}, ${f3(p.e)}${p.z != null ? ', ' + f3(p.z) : ''})</option>`).join('');
+  const opts = '<option value="">＋ 점 목록에서 추가…</option>' + S.points.map(p => `<option value="${p.id}">${esc(p.name)} (${f3(p.n)}, ${f3(p.e)}${p.z != null ? ', ' + f3(p.z) : ''})</option>`).join('');
   $('#segList').innerHTML = S.segs.map(sg => {
     const info = GL.alignInfo(sg.pts), K = kindOf(sg), ss = stas(sg), id = sg.id;
     const rows = sg.pts.map((p, i) => `<div class="vrow"><div class="vh"><span class="vi">${i + 1}</span><input data-s="${id}" data-v="${i}" data-f="name" value="${esc(p.name)}" placeholder="이름" aria-label="이름">
@@ -723,7 +738,7 @@ function hRefText() {
 function renderSettings() {
   const s = S.settings;
   $('#crs').innerHTML = Object.entries(GL.CRS).map(([k, v]) => `<option value="${k}">${v.name}</option>`).join(''); $('#crs').value = s.crs;
-  $('#beepGuide').checked = !!s.beepGuide; $('#sVoice').checked = !!s.voiceGuide; $('#beepStart').value = s.beepStart; $('#beepVol').value = s.beepVol; agUi();
+  $('#beepGuide').checked = !!s.beepGuide; $('#fixCheer').checked = !!s.fixCheer; $('#sVoice').checked = !!s.voiceGuide; $('#beepStart').value = s.beepStart; $('#beepVol').value = s.beepVol; agUi();
   $('#hRef').value = s.hRef; $('#hRefInfo').textContent = hRefText(); $('#antH').value = s.antH; $('#avgSec').value = s.avgSec; $('#tol').value = s.tol; $('#reqFix').checked = s.reqFix; $('#fixSd').value = s.fixSd; $('#baud').value = s.baud;
   $$('#srcSel button').forEach(b => b.classList.toggle('on', b.dataset.src === s.source));
   $('#serialBox').hidden = s.source !== 'serial'; $('#bleBox').hidden = s.source !== 'ble'; $('#nativeBox').hidden = s.source !== 'native';
@@ -784,7 +799,7 @@ function knownPoints() {
   S.points.forEach(p => k.push({ label: `${p.name} (N/E/Z)`, n: p.n, e: p.e, z: p.z })); return k;
 }
 $('#srcSel').onclick = e => { const b = e.target.closest('button'); if (!b) return; S.settings.source = b.dataset.src; save(); startSource(); };
-['crs', 'antH', 'avgSec', 'tol', 'reqFix', 'fixSd', 'baud', 'hRef', 'beepGuide', 'beepStart', 'beepVol'].forEach(id => $('#' + id).addEventListener('change', e => {
+['crs', 'antH', 'avgSec', 'tol', 'reqFix', 'fixSd', 'baud', 'hRef', 'beepGuide', 'beepStart', 'beepVol', 'fixCheer'].forEach(id => $('#' + id).addEventListener('change', e => {
   const t = e.target; S.settings[id] = t.type === 'checkbox' ? t.checked : (id === 'crs' || id === 'hRef' ? t.value : +t.value); save();
   if (id === 'hRef') { if (t.value === 'kn') loadGeoid(); renderSettings(); }
   if (id === 'beepGuide') { if (t.checked) { agCtx(); agSched(300); } agUi(); }
@@ -889,7 +904,7 @@ function renderMap(c, w, h, o, live) {
   c.fillStyle = '#fff'; c.fillRect(0, 0, w, h); c.font = '11px system-ui'; c.textBaseline = 'middle';
   const P = (n, e) => w2s(o, w, h, n, e);
   const st = niceStep(70, o.s), n0 = o.cn - h / 2 / o.s, n1 = o.cn + h / 2 / o.s, e0 = o.ce - w / 2 / o.s, e1 = o.ce + w / 2 / o.s;
-  c.strokeStyle = '#e5eae7'; c.fillStyle = '#8a9891'; c.lineWidth = 1; c.textAlign = 'left';
+  c.strokeStyle = '#e6ebd8'; c.fillStyle = '#8a9674'; c.lineWidth = 1; c.textAlign = 'left';
   for (let e = Math.ceil(e0 / st) * st; e < e1; e += st) { const [x] = P(0, e); c.beginPath(); c.moveTo(x, 0); c.lineTo(x, h); c.stroke(); c.fillText(e.toFixed(st < 1 ? 1 : 0), x + 2, h - 8); }
   for (let n = Math.ceil(n0 / st) * st; n < n1; n += st) { const [, y] = P(n, 0); c.beginPath(); c.moveTo(0, y); c.lineTo(w, y); c.stroke(); c.save(); c.translate(8, y - 2); c.rotate(-Math.PI / 2); c.fillText(n.toFixed(st < 1 ? 1 : 0), 0, 0); c.restore(); }
   drawDxf(c, w, h, o); c.font = '11px system-ui';
@@ -906,7 +921,7 @@ function renderMap(c, w, h, o, live) {
     if (cur && info.len > 0) { const ss = stas(g);
       ss.forEach(s => { const [x, y] = P(s.n, s.e), a = s.az * Math.PI / 180, px = Math.cos(a), py = Math.sin(a), cs = s.i === S.curSta;    // 화면에서 선형 진행방향에 수직인 단위벡터
         c.strokeStyle = cs ? '#dc2626' : '#2563eb'; c.lineWidth = cs ? 3 : 1.5; c.beginPath(); c.moveTo(x - px * 7, y - py * 7); c.lineTo(x + px * 7, y + py * 7); c.stroke();
-        const sh = S.shots[shotKey(g, s)]; if (sh) { c.fillStyle = sh.kind === 'CUT' ? '#c2410c' : sh.kind === 'FILL' ? '#1d4ed8' : '#15803d'; c.beginPath(); c.arc(...P(sh.n, sh.e), 4, 0, 7); c.fill();
+        const sh = S.shots[shotKey(g, s)]; if (sh) { c.fillStyle = sh.kind === 'CUT' ? '#b94e17' : sh.kind === 'FILL' ? '#1d4ed8' : '#4f9a1f'; c.beginPath(); c.arc(...P(sh.n, sh.e), 4, 0, 7); c.fill();
           if (o.s * (+g.interval || 5) > 40 && sh.depth != null) { c.textAlign = 'left'; c.fillText(sh.kind === 'OK' ? '±0' : fSign(sh.depth, 2), x + px * 12 + 4, y + py * 12); } }
         if (o.s * (+g.interval || 5) > 26 && s.vertex < 0) { c.fillStyle = '#374151'; c.textAlign = 'center'; c.fillText(s.ch % 1 ? s.ch.toFixed(1) : s.ch, x - px * 18, y - py * 18); } }); }
     g.pts.forEach((m, i) => { const [x, y] = pp[i], end = i === 0 || i === g.pts.length - 1;
@@ -915,13 +930,13 @@ function renderMap(c, w, h, o, live) {
     if (info.len > 0) { const a = pp[0], b = pp[pp.length - 1]; c.fillStyle = '#1e3a8a'; c.textAlign = 'center'; c.save(); c.translate((a[0] + b[0]) / 2, (a[1] + b[1]) / 2); let ang = Math.atan2(b[1] - a[1], b[0] - a[0]); if (Math.abs(ang) > Math.PI / 2) ang += Math.PI; c.rotate(ang);
       c.fillText(`L=${info.len.toFixed(3)}` + (info.grade != null ? `  S=${fSign(info.grade, 2)}%` : ''), 0, 14); c.restore(); }
   });
-  S.points.forEach(p => { const [x, y] = P(p.n, p.e); c.fillStyle = '#15803d'; c.fillRect(x - 3.5, y - 3.5, 7, 7); c.fillStyle = '#14532d'; c.textAlign = 'left'; c.fillText(p.name + (p.z != null ? ' ' + f3(p.z) : ''), x + 6, y + 10); });
-  Object.values(S.pshots).forEach(sh => { const [x, y] = P(sh.tn, sh.te), [mx, my] = P(sh.n, sh.e); c.strokeStyle = '#16a34a'; c.lineWidth = 1.5; c.beginPath(); c.arc(x, y, 5, 0, 7); c.stroke(); c.fillStyle = '#0d9488'; c.beginPath(); c.arc(mx, my, 3, 0, 7); c.fill(); });
+  S.points.forEach(p => { const [x, y] = P(p.n, p.e); c.fillStyle = '#4f9a1f'; c.fillRect(x - 3.5, y - 3.5, 7, 7); c.fillStyle = '#35560f'; c.textAlign = 'left'; c.fillText(p.name + (p.z != null ? ' ' + f3(p.z) : ''), x + 6, y + 10); });
+  Object.values(S.pshots).forEach(sh => { const [x, y] = P(sh.tn, sh.te), [mx, my] = P(sh.n, sh.e); c.strokeStyle = '#5aa02c'; c.lineWidth = 1.5; c.beginPath(); c.arc(x, y, 5, 0, 7); c.stroke(); c.fillStyle = '#0d9488'; c.beginPath(); c.arc(mx, my, 3, 0, 7); c.fill(); });
   if (S.stakeMode === 'pt' && S.ptTarget) { const [x, y] = P(S.ptTarget.n, S.ptTarget.e); c.strokeStyle = '#dc2626'; c.lineWidth = 2.5; c.beginPath(); c.arc(x, y, 9, 0, 7); c.moveTo(x - 13, y); c.lineTo(x + 13, y); c.moveTo(x, y - 13); c.lineTo(x, y + 13); c.stroke(); }
-  if (live && L && isFinite(L.site.n)) { const [x, y] = P(L.site.n, L.site.e), col = L.fix === 'FIXED' ? '#15803d' : L.fix === 'FLOAT' ? '#d97706' : '#b91c1c';
+  if (live && L && isFinite(L.site.n)) { const [x, y] = P(L.site.n, L.site.e), col = L.fix === 'FIXED' ? '#4f9a1f' : L.fix === 'FLOAT' ? '#d4651a' : '#b91c1c';
     if (L.sdH) { c.fillStyle = col + '30'; c.beginPath(); c.arc(x, y, Math.max(L.sdH * o.s, 6), 0, 7); c.fill(); }
     c.strokeStyle = col; c.lineWidth = 2; c.beginPath(); c.moveTo(x - 12, y); c.lineTo(x + 12, y); c.moveTo(x, y - 12); c.lineTo(x, y + 12); c.stroke(); c.fillStyle = col; c.beginPath(); c.arc(x, y, 4, 0, 7); c.fill(); }
-  c.fillStyle = '#0d1b16'; c.textAlign = 'center'; c.font = '700 13px system-ui'; c.fillText('N', 22, 14); c.beginPath(); c.moveTo(22, 20); c.lineTo(16, 38); c.lineTo(22, 33); c.lineTo(28, 38); c.closePath(); c.fill(); c.font = '11px system-ui';
+  c.fillStyle = '#1b2312'; c.textAlign = 'center'; c.font = '700 13px system-ui'; c.fillText('N', 22, 14); c.beginPath(); c.moveTo(22, 20); c.lineTo(16, 38); c.lineTo(22, 33); c.lineTo(28, 38); c.closePath(); c.fill(); c.font = '11px system-ui';
   const sb = niceStep(80, o.s), px = sb * o.s; c.fillRect(12, h - 26, px, 3); c.textAlign = 'left'; c.fillText(sb + ' m', 16 + px, h - 24);
 }
 function drawMap() {
@@ -1121,14 +1136,14 @@ $('#gtMeasure').onclick = async () => {
 
 function drawSky() {
   const cv = $('#skyPlot'); if (!cv || !cv.clientWidth) return; const { c, w, h } = ctx2d(cv); c.clearRect(0, 0, w, h);
-  const cx = w / 2, cy = h / 2, R = Math.min(w, h) / 2 - 20; c.strokeStyle = '#cfd8d3'; c.lineWidth = 1; c.fillStyle = '#5b6b64'; c.font = '11px system-ui'; c.textAlign = 'center';
+  const cx = w / 2, cy = h / 2, R = Math.min(w, h) / 2 - 20; c.strokeStyle = '#d6ddc3'; c.lineWidth = 1; c.fillStyle = '#5e6a4f'; c.font = '11px system-ui'; c.textAlign = 'center';
   [0, 30, 60].forEach(el => { c.beginPath(); c.arc(cx, cy, R * (90 - el) / 90, 0, 7); c.stroke(); });
   c.beginPath(); c.moveTo(cx - R, cy); c.lineTo(cx + R, cy); c.moveTo(cx, cy - R); c.lineTo(cx, cy + R); c.stroke(); c.fillText('N', cx, cy - R - 6); c.fillText('S', cx, cy + R + 13); c.fillText('E', cx + R + 10, cy + 4); c.fillText('W', cx - R - 10, cy + 4);
   const sk = skySnapshot(), info = $('#skyInfo');
   if (!sk) { c.fillText('위성 정보(GSV) 없음 — USB 시리얼·BLE·데모 소스에서 표시', cx, cy); info.textContent = ''; return; }
   sk.forEach(s => {
     if (s.el == null || s.az == null) return; const r = R * (90 - s.el) / 90, a = s.az * Math.PI / 180, x = cx + r * Math.sin(a), y = cy - r * Math.cos(a), cn = s.cn0 == null ? 0 : s.cn0;
-    c.fillStyle = cn >= 40 ? '#15803d' : cn >= 32 ? '#ca8a04' : cn > 0 ? '#b91c1c' : '#9ca3af'; c.beginPath(); c.arc(x, y, s.used ? 9 : 6, 0, 7); c.fill();
+    c.fillStyle = cn >= 40 ? '#4f9a1f' : cn >= 32 ? '#ca8a04' : cn > 0 ? '#b91c1c' : '#9ca3af'; c.beginPath(); c.arc(x, y, s.used ? 9 : 6, 0, 7); c.fill();
     if (!s.used) { c.strokeStyle = '#fff'; c.lineWidth = 2; c.stroke(); } c.fillStyle = '#fff'; c.font = '8px system-ui'; c.fillText(String(s.prn), x, y + 3); c.font = '11px system-ui';
   });
   const f = skyFeatures(sk); info.textContent = `가시 ${f.nVis} · 사용 ${f.nUsed} · 평균 C/N0 ${f.cn0Used != null ? f.cn0Used.toFixed(1) : '–'} dB-Hz · 저고도(<15°) 사용 ${f.nLowEl} · 약신호(<35) ${f.nWeak}${f.pdop != null ? ' · PDOP ' + f.pdop : ''}  (녹색 ≥40 / 황색 ≥32 / 적색 <32, 큰 점=사용 위성)`;
@@ -1418,9 +1433,19 @@ function agFixWatch(ok) {
   const now = Date.now(); if (!AG.pend || AG.pend.v !== ok) { AG.pend = { v: ok, t: now }; return; }
   if (now - AG.pend.t < 1500) return;
   AG.fixOk = ok; AG.pend = null;
-  if (agOn()) (ok ? agUp : agWarn)();
-  if (S.settings.voiceGuide) say(ok ? 'FIXED 복귀. 측량할 수 있습니다' : 'FIXED 해제. 측량하지 마세요', { force: true, interrupt: true });
+  if (ok) {   // FIXED 달성: 설정(fixCheer)이 켜져 있으면 소리 안내와 상관없이 한 번 유쾌하게
+    if (S.settings.fixCheer || agOn()) agCheer();
+    if (S.settings.fixCheer || S.settings.voiceGuide) say(cheerWord(), { force: true, interrupt: true });
+    return;
+  }
+  if (agOn()) agWarn();
+  if (S.settings.voiceGuide) say('FIXED 해제. 측량하지 마세요', { force: true, interrupt: true });
 }
+// 통통 튀는 4음 차임(도–미–솔–높은 도)과 짧은 한마디. 같은 말이 연속으로 나오지 않게 돌려 쓴다
+const agCheer = () => { [523, 659, 784, 1047].forEach((f, i) => agTone(f, i === 3 ? 320 : 110, { delay: i * 0.11, type: 'triangle' })); };
+const CHEERS = ['고정됐어요!', '픽스 완료! 잘 잡혔어요', '좋아요, 단단히 고정!', '위성 꽉 잡았어요', '고정 성공! 이제 측량하세요', '딱 붙었어요, 출발!'];
+let cheerI = Math.floor(Math.random() * CHEERS.length);
+function cheerWord() { cheerI = (cheerI + 1) % CHEERS.length; return CHEERS[cheerI]; }
 function agUi() {
   const on = agOn() || !!S.settings.voiceGuide, b = gv('audioTgl'); if (!b) return;
   b.classList.toggle('on', on); b.textContent = on ? '🔊' : '🔇'; b.setAttribute('aria-pressed', on ? 'true' : 'false');
@@ -1616,7 +1641,7 @@ gv('ttsClear').onclick = async () => {
 idb.get('cmdlog').then(a => { if (Array.isArray(a)) CMDLOG = a.concat(CMDLOG); }).catch(() => {});
 
 // ───────────── 루프 / 초기화 ─────────────
-function render() { dirty = false; updateTop(); if (tab === 'stake') updateStake(); else if (tab === 'map') drawMap(); else if (tab === 'settings') renderLogLive(); }
+function render() { dirty = false; guard('상단', updateTop); if (tab === 'stake') guard('찾기', updateStake); else if (tab === 'map') guard('도면', drawMap); else if (tab === 'settings') guard('설정', renderLogLive); }
 function frame() { if (dirty) render(); requestAnimationFrame(frame); }
 setInterval(() => { if (L) dirty = true; }, 1000);
 window.addEventListener('resize', () => { dirty = true; });

@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
-<meta name="theme-color" content="#0b3d2e">
+<meta name="theme-color" content="#1f2a14">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>간이측량기</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon-192.png">
-<link rel="stylesheet" href="style.css?v=15">
+<link rel="stylesheet" href="style.css?v=18">
 </head>
 <body>
 <header id="top">
@@ -120,7 +120,7 @@
 <!-- ═══ 도면 ═══ -->
 <section id="tab-map" class="tab" hidden>
   <div class="row gap dxfBar">
-    <label class="btn ghost">📂 DXF 불러오기<input id="dxfFile" type="file" accept=".dxf,.DXF" hidden></label>
+    <label class="btn ghost">📂 DXF 열기<input id="dxfFile" type="file" accept=".dxf,.DXF" hidden></label>
     <button id="dxfLayers" class="ghost">레이어</button><button id="dxfToggle" class="ghost">배경 켜짐</button>
   </div>
   <div id="dxfInfo" class="hint dxfInfo" hidden></div>
@@ -150,7 +150,7 @@
 <section id="tab-segs" class="tab" hidden>
   <div class="row gap"><h3>선형 · 관로</h3><button id="segAdd" class="primary sm">＋ 관로</button><button id="segAddLine" class="primary sm">＋ 선형</button></div>
   <div id="segList"></div>
-  <details class="card"><summary>좌표 붙여넣기로 선형 만들기 (이름,N,E,Z — Z 생략 가능)</summary>
+  <details class="card"><summary>좌표 붙여넣기로 선형 만들기</summary>
     <textarea id="segPaste" rows="4" placeholder="A,510128,177803,10.0&#10;,510150,177830&#10;B,510158,177843,9.7"></textarea>
     <div class="row gap"><select id="segPasteKind"><option value="line">일반 선형</option><option value="pipe">관로</option></select><button id="segPasteGo" class="ghost">만들기</button></div></details>
   <p class="hint">도면 탭에서 DXF를 불러온 뒤 <b>폴리라인/선을 탭 → “선형으로 사용”</b>, 원(맨홀)을 두 번 탭 → “관로 시점/종점” 으로도 만들 수 있습니다.</p>
@@ -269,6 +269,7 @@
     <div class="form">
       <label class="chk"><input id="beepGuide" type="checkbox"> 근접 비프 — 가까울수록 빠르고 높은 소리</label>
       <label class="chk"><input id="sVoice" type="checkbox"> 음성 안내 — 방향과 거리를 말로</label>
+      <label class="chk"><input id="fixCheer" type="checkbox"> FIXED가 되면 한 번 축하 알림 (차임 + “고정됐어요!”)</label>
       <label>비프 시작 거리 (m)<input id="beepStart" type="number" step="0.5" min="2" max="30" inputmode="decimal"></label>
       <label>비프 볼륨<input id="beepVol" type="range" min="0.1" max="1" step="0.1"></label>
     </div>
@@ -352,6 +353,6 @@
 <script src="core.js?v=9"></script>
 <script src="dxf.js?v=6"></script>
 <script src="nlu.js?v=7"></script>
-<script src="app.js?v=21"></script>
+<script src="app.js?v=25"></script>
 </body>
 </html>
