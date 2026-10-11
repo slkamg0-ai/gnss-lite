@@ -36,7 +36,7 @@ def say(*a):
 
 PARAMS = [
     ('# 외형', None, None),
-    ('body_w', 34.0, '아래 몸체 사각 폭(x)'), ('body_d', 16.6, '아래 몸체 사각 두께(y)'), ('body_r', 5.0, '사각 모서리 반경'), ('rwall', 2.4, '사각 몸체 벽 두께'), ('sh_t', 3.0, '사각→원통 전환 판 두께(원통 안쪽 공간이 사각 몸체 밖으로 뚫리는 곳을 막음)'),
+    ('body_w', 34.0, '아래 몸체 사각 폭(x)'), ('body_d', 16.6, '아래 몸체 사각 두께(y)'), ('body_r', 5.0, '사각 모서리 반경'), ('rwall', 2.4, '사각 몸체 벽 두께'), ('head_fillet', 1.5, '머리 치마 아래 바깥 모서리 둥글림 R'), ('sh_t', 3.0, '사각→원통 전환 판 두께(원통 안쪽 공간이 사각 몸체 밖으로 뚫리는 곳을 막음)'),
     ('D_body', 38.0, '몸체 바깥 지름(안테나 Ø38 과 같게)'), ('wall', 3.0, '몸체 벽 두께'),
     ('D_head', 50.0, '머리 바깥 지름'), ('floor_t', 3.0, '바닥 두께'),
     ('# 가정: 보드 WTRTK-980 (실측 필요)', None, None),
@@ -264,6 +264,15 @@ h_cuts = fuse('Head_Cuts', [h_neck, h_face, h_track] + ins)
 head = cut('Head', h_shell, h_cuts)
 
 doc.recompute()
+# 머리 치마 아래 바깥 모서리(R_head 원, z=z_s) 둥글림: 원래 Head 는 두고 Head_Fillet 가 최종 머리가 된다
+head_raw = head
+fe = [i for i, e in enumerate(head_raw.Shape.Edges, 1)
+      if e.Curve.TypeId == 'Part::GeomCircle' and abs(e.Curve.Radius - R_head) < 0.01 and abs(e.BoundBox.ZMin - z_s) < 0.05 and abs(e.BoundBox.ZMax - z_s) < 0.05]
+assert len(fe) == 1, '머리 아래 바깥 모서리를 찾지 못함: %s' % fe
+head = doc.addObject('Part::Fillet', 'Head_Fillet')
+head.Base = head_raw
+head.Edges = [(fe[0], v['head_fillet'], v['head_fillet'])]
+doc.recompute()
 bad = [o.Name for o in doc.Objects if 'Invalid' in o.State or 'Error' in ' '.join(o.State)]
 say('재계산 오류 객체:', bad or '없음')
 
@@ -297,7 +306,7 @@ say('외형 부피 약 %.0f cm³ (눕힌 마운트 Ø96.5x40 = %.0f cm³)' % (vo
 
 ref = feat('Ref_BoardKeepout', KO)
 doc.recompute()
-FINAL = ('Body', 'Head', 'Ref_BoardKeepout')
+FINAL = ('Body', 'Head_Fillet', 'Ref_BoardKeepout')
 for o in doc.Objects:
     if o.Name != 'Params':
         o.Visibility = o.Name in FINAL
