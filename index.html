@@ -9,7 +9,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon-192.png">
-<link rel="stylesheet" href="style.css?v=14">
+<link rel="stylesheet" href="style.css?v=15">
 </head>
 <body>
 <header id="top">
@@ -52,7 +52,7 @@
   </div>
 
   <div class="card target">
-    <div class="tHead"><span id="tName">–</span><span id="tDes">–</span></div>
+    <div class="tHead"><span id="tName">–</span><span id="tDes">–</span><button id="audioTgl" class="aBtn" type="button" aria-label="소리 안내 켜기/끄기" aria-pressed="false">🔇</button></div>
     <canvas id="bull" aria-label="스테이크아웃 조준판"></canvas>
     <div class="guide">
       <div><small id="gFwdL">전 / 후</small><b id="gFwd">–</b></div>
@@ -264,6 +264,18 @@
     <p class="hint">잔차가 큰 점(빨간색)은 <b>끄기</b>로 계산에서 빼 보세요. 축척은 도면과 GNSS 투영 좌표의 차이를, 경사면은 지반 경사나 지오이드 경사를 흡수합니다. 기지점이 일직선이거나 너무 가까우면 풀리지 않습니다.</p>
   </div>
 
+  <div class="card">
+    <h3>소리 안내 (귀로 찾아가기)</h3>
+    <div class="form">
+      <label class="chk"><input id="beepGuide" type="checkbox"> 근접 비프 — 가까울수록 빠르고 높은 소리</label>
+      <label class="chk"><input id="sVoice" type="checkbox"> 음성 안내 — 방향과 거리를 말로</label>
+      <label>비프 시작 거리 (m)<input id="beepStart" type="number" step="0.5" min="2" max="30" inputmode="decimal"></label>
+      <label>비프 볼륨<input id="beepVol" type="range" min="0.1" max="1" step="0.1"></label>
+    </div>
+    <button id="beepTest" class="ghost">시험음 (왼쪽 → 가운데 → 오른쪽 → 도착)</button>
+    <p class="hint">찾기 화면의 🔊 버튼으로도 한 번에 켜고 끕니다. 시작 거리 안에 들어오면 소리가 나기 시작해 가까울수록 빨라지고 높아집니다. 이어폰이면 목표가 있는 쪽(왼/오른쪽)에서 소리가 납니다. 낮은 “두 번 삑”은 목표가 뒤쪽, “딩동”은 도착입니다. 낮은 경고음은 FIXED가 아니라는 뜻이니 측설을 멈추세요. 점 찾기에서는 방위를 몰라 좌우 위치는 쓰지 않습니다.</p>
+  </div>
+
   <div class="card" id="ttsCard">
     <h3>안내 음성 (선택)</h3>
     <p class="hint">기본은 폰 내장 음성입니다. ElevenLabs를 쓰면 자연스러운 한국어 음성이 나옵니다. 한 번 만든 문구는 <b>이 폰에 저장</b>되어 다시 쓸 때 무료·즉시·오프라인으로 재생되고, 만들지 못하면 기본 음성으로 대체됩니다. 전송 내용은 <b>안내 문구 글자</b>뿐입니다.</p>
@@ -337,9 +349,9 @@
 </nav>
 
 <div id="printArea"></div>
-<script src="core.js?v=8"></script>
+<script src="core.js?v=9"></script>
 <script src="dxf.js?v=6"></script>
 <script src="nlu.js?v=7"></script>
-<script src="app.js?v=20"></script>
+<script src="app.js?v=21"></script>
 </body>
 </html>

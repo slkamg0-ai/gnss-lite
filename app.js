@@ -56,6 +56,7 @@ function undo() {
 }
 function refreshAll() { buildStake(); renderSurvey(); renderAreas(); renderSegs(); dirty = true; }
 if (S.settings.fixSd == null) S.settings.fixSd = 0.03;   // FIXED 로 인정하는 수평 추정 오차 한도(m), 0 이면 끔
+if (S.settings.beepGuide == null) Object.assign(S.settings, { beepGuide: false, beepVol: 0.7, beepStart: 5 });   // 소리 안내(근접 비프): 시작 거리 m, 볼륨 0.1~1
 if (S.settings.hRef == null) S.settings.hRef = 'rx';      // 높이 기준: 'rx' 수신기 고도 그대로 / 'kn' 국가지오이드(KNGeoid24) 정표고
 
 // 국가지오이드 격자(약 700 KB): 높이 기준을 'kn' 으로 쓸 때만 내려받는다(서비스워커가 캐시하므로 오프라인에서도 동작)
@@ -416,14 +417,19 @@ function updateTop() {
   $('#vAcc').textContent = L && L.sdH != null ? (L.sdH >= 1 ? L.sdH.toFixed(1) + 'm' : `${(L.sdH * 100).toFixed(1)}/${L.sdV != null ? (L.sdV * 100).toFixed(1) : '–'}`) : '–';   // 1 m 이상이면 미터로 짧게(칸 겹침 방지)
   $('#vSrc').textContent = { sim: '데모', geo: '폰 GPS', serial: '시리얼', ble: 'BLE', native: 'USB' }[S.settings.source];
   $('#vN').textContent = L ? f3(L.site.n) : '–'; $('#vE').textContent = L ? f3(L.site.e) : '–'; $('#vZ').textContent = L ? f3(L.site.z) : '–';
-  let w = '';
+  // 알림 줄: bad(붉은 점멸) = 측량 불가, caution(주황) = 주의, info(노랑) = 안내, ok(차분한 녹색 숨쉬는 빛) = FIXED 정상
+  let w = '', lvl = 'bad';
   if (!L) w = '위치 수신 없음 — 설정에서 소스 확인'; else if (st > 3000) w = `수신 끊김 (${(st / 1000).toFixed(0)}초)`;
-  else if (S.settings.reqFix && fix !== 'FIXED') w = L.rawFix === 'FIXED' ? `수신기는 FIXED지만 추정 오차 ${(L.sdH * 100).toFixed(1)} cm > ${(S.settings.fixSd * 100).toFixed(1)} cm — FLOAT 취급(측량 잠김)` : `FIXED 아님(${fix}) — 측량 잠김`; else if (!isFinite(L.site.z)) w = '고도 정보 없음 — 높이 측량 불가';
+  else if (S.settings.reqFix && fix !== 'FIXED') { w = L.rawFix === 'FIXED' ? `수신기는 FIXED지만 추정 오차 ${(L.sdH * 100).toFixed(1)} cm > ${(S.settings.fixSd * 100).toFixed(1)} cm — FLOAT 취급(측량 잠김)` : `FIXED 아님(${fix}) — 측량 잠김`; if (fix === 'FLOAT') lvl = 'caution'; }
+  else if (!isFinite(L.site.z)) { w = '고도 정보 없음 — 높이 측량 불가'; lvl = 'caution'; }
   else if (L.tilt && L.tilt.missing) w = 'IMU: ' + L.tilt.why + ' — 측량 잠김';
   else if (L.tilt && !L.tilt.ok) w = '기울기 ' + L.tilt.theta.toFixed(1) + '° > 한계 ' + L.tilt.lim.toFixed(1) + '°' + (L.tilt.magOk ? '' : ' (자력 불량)') + ' — 측량 잠김';
-  else if (L.tilt && !L.tilt.magOk) w = '자력 불량 — 방위 보정 꺼짐(높이만 보정), 폴을 수직으로';
-  else if (S.settings.source === 'sim') w = '데모 모드 — 가상 위치입니다';
-  $('#warn').hidden = !w; $('#warn').textContent = w;
+  else if (L.tilt && !L.tilt.magOk) { w = '자력 불량 — 방위 보정 꺼짐(높이만 보정), 폴을 수직으로'; lvl = 'caution'; }
+  else if (fix !== 'FIXED') { w = `FIXED 아님(${fix})`; if (fix === 'FLOAT') lvl = 'caution'; }
+  else if (S.settings.source === 'sim') { w = '데모 모드 — 가상 위치입니다'; lvl = 'info'; }
+  else { w = 'FIXED 정상' + (L.sdH != null ? ' · ' + (L.sdH * 100).toFixed(1) + ' cm' : '') + ' — 진행하세요'; lvl = 'ok'; }
+  const wb = $('#warn'); wb.hidden = false; wb.textContent = w; wb.className = 'warn ' + lvl;
+  agFixWatch(!!(L && fix === 'FIXED' && st <= 3000));
 }
 
 // ───────────── 찾기(스테이크아웃): 선형·관로 / 점 ─────────────
@@ -717,6 +723,7 @@ function hRefText() {
 function renderSettings() {
   const s = S.settings;
   $('#crs').innerHTML = Object.entries(GL.CRS).map(([k, v]) => `<option value="${k}">${v.name}</option>`).join(''); $('#crs').value = s.crs;
+  $('#beepGuide').checked = !!s.beepGuide; $('#sVoice').checked = !!s.voiceGuide; $('#beepStart').value = s.beepStart; $('#beepVol').value = s.beepVol; agUi();
   $('#hRef').value = s.hRef; $('#hRefInfo').textContent = hRefText(); $('#antH').value = s.antH; $('#avgSec').value = s.avgSec; $('#tol').value = s.tol; $('#reqFix').checked = s.reqFix; $('#fixSd').value = s.fixSd; $('#baud').value = s.baud;
   $$('#srcSel button').forEach(b => b.classList.toggle('on', b.dataset.src === s.source));
   $('#serialBox').hidden = s.source !== 'serial'; $('#bleBox').hidden = s.source !== 'ble'; $('#nativeBox').hidden = s.source !== 'native';
@@ -777,9 +784,10 @@ function knownPoints() {
   S.points.forEach(p => k.push({ label: `${p.name} (N/E/Z)`, n: p.n, e: p.e, z: p.z })); return k;
 }
 $('#srcSel').onclick = e => { const b = e.target.closest('button'); if (!b) return; S.settings.source = b.dataset.src; save(); startSource(); };
-['crs', 'antH', 'avgSec', 'tol', 'reqFix', 'fixSd', 'baud', 'hRef'].forEach(id => $('#' + id).addEventListener('change', e => {
+['crs', 'antH', 'avgSec', 'tol', 'reqFix', 'fixSd', 'baud', 'hRef', 'beepGuide', 'beepStart', 'beepVol'].forEach(id => $('#' + id).addEventListener('change', e => {
   const t = e.target; S.settings[id] = t.type === 'checkbox' ? t.checked : (id === 'crs' || id === 'hRef' ? t.value : +t.value); save();
   if (id === 'hRef') { if (t.value === 'kn') loadGeoid(); renderSettings(); }
+  if (id === 'beepGuide') { if (t.checked) { agCtx(); agSched(300); } agUi(); }
   if (id === 'crs') { SIM.o = simOrigin(); SIM.n = SIM.o.n - 3; SIM.e = SIM.o.e - 4; } dirty = true; }));
 $('#btnSerial').onclick = () => port ? serialDisconnect() : serialConnect();
 $('#btnUm982').onclick = um982Cfg;
@@ -1261,7 +1269,7 @@ async function ttsSpeak(msg, o) {
   TTSSRC = srcs; srcs[srcs.length - 1].onended = () => { if (TTSSRC === srcs) TTSSRC = null; };
 }
 function ttsStop() { if (TTSSRC) { TTSSRC.forEach(s => { try { s.onended = null; s.stop(); } catch (e) {} }); TTSSRC = null; } try { window.speechSynthesis && speechSynthesis.cancel(); } catch (e) {} }
-const spLen = v => { v = Math.abs(v); return v < 1 ? (Math.round(v * 20) * 5 || 5) + ' 센티' : v.toFixed(1) + ' 미터'; };
+const spLen = GL.spokenLen;
 const bad = (msg) => ({ ok: false, msg });
 const ACTIONS = {
   undo: { risk: 'safe', run() { if (!UNDO.length) return bad('되돌릴 작업이 없습니다'); const l = UNDO[UNDO.length - 1].label; undo(); return { ok: true, msg: l + ' 되돌렸습니다' }; } },
@@ -1373,15 +1381,69 @@ async function llmTest() {
   catch (e) { el.textContent = '실패: ' + (e && e.message || e); }
 }
 
-// 음성 안내: 찾기 화면에서 화면을 보지 않고 목표까지 이동 (2.5초 이상 간격, 같은 말 반복 억제, 도착 시 1회 알림)
+// ── 소리 안내(귀로 찾아가기): 시작 거리 안에서 가까울수록 빠르고 높은 비프, 이어폰이면 목표 쪽(좌/우)에서 소리, 목표가 뒤면 낮은 두 번 삑, 도착 시 차임.
+// FIXED 가 아니면 접근 비프 대신 낮은 경고음만 낸다(믿을 수 없는 위치로 안내하지 않음). 음성 안내(voiceGuide)와 따로 켜고 끈다.
+const AG = { ctx: null, cur: null, timer: null, arrived: false, nextWarn: 0, fixOk: null, pend: null };
+const agOn = () => !!S.settings.beepGuide;
+function agCtx() { try { if (!AG.ctx) AG.ctx = new (window.AudioContext || window.webkitAudioContext)(); if (AG.ctx.state === 'suspended') AG.ctx.resume(); } catch (e) {} return AG.ctx; }
+function agTone(freq, ms, o) {
+  o = o || {}; const c = agCtx(); if (!c) return;
+  const t0 = c.currentTime + (o.delay || 0), end = t0 + ms / 1000, vol = Math.max(0.1, Math.min(1, +S.settings.beepVol || 0.7)) * 0.4;
+  const osc = c.createOscillator(), g = c.createGain(); osc.type = o.type || 'sine'; osc.frequency.value = freq; osc.connect(g);
+  g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(vol, t0 + 0.008); g.gain.setValueAtTime(vol, Math.max(t0 + 0.009, end - 0.03)); g.gain.exponentialRampToValueAtTime(0.0001, end);
+  if (o.pan && c.createStereoPanner) { const p = c.createStereoPanner(); p.pan.value = o.pan; g.connect(p); p.connect(c.destination); } else g.connect(c.destination);
+  osc.start(t0); osc.stop(end + 0.02);
+}
+const agChime = () => { agTone(880, 140); agTone(1320, 260, { delay: 0.16 }); };
+const agWarn = () => { agTone(330, 200, { type: 'sawtooth' }); agTone(247, 340, { type: 'sawtooth', delay: 0.24 }); };
+const agUp = () => { agTone(660, 120); agTone(990, 200, { delay: 0.13 }); };
+function agSched(ms) { clearTimeout(AG.timer); AG.timer = setTimeout(agLoop, ms); }
+function agLoop() {
+  AG.timer = null; if (!agOn()) return;
+  const c = AG.cur, now = Date.now();
+  if (!c || now - c.t > 2500 || tab !== 'stake') return agSched(400);                       // 위치가 끊기거나 찾기 화면이 아니면 무음
+  if (!c.fixOk) { if (now >= AG.nextWarn) { agWarn(); AG.nextWarn = now + 2500; } return agSched(300); }
+  const p = GL.beepPlan(c.dist, c.tol, +S.settings.beepStart || 5);
+  if (!p) { AG.arrived = false; return agSched(400); }
+  if (p.arrived) { if (!AG.arrived) { AG.arrived = true; agChime(); } return agSched(300); }
+  if (AG.arrived && c.dist > 2 * c.tol + 0.02) AG.arrived = false;                        // 도착 해제는 여유를 두어 경계에서 차임이 반복되지 않게
+  const pan = c.pt ? 0 : GL.panOf(c.right, c.dist), behind = !c.pt && c.fwd < -Math.max(c.tol, 0.35 * c.dist);
+  if (behind) { agTone(p.freq * 0.5, 90, { type: 'square', pan }); agTone(p.freq * 0.5, 90, { type: 'square', pan, delay: 0.14 }); } else agTone(p.freq, 80, { pan });
+  agSched(p.interval);
+}
+// FIXED 상태 변화 알림(1.5초 이상 유지된 변화만): 해제 = 경고음 + "FIXED 해제", 복귀 = 상승음 + "FIXED 복귀"
+function agFixWatch(ok) {
+  if (AG.fixOk == null) { AG.fixOk = ok; return; }
+  if (ok === AG.fixOk) { AG.pend = null; return; }
+  const now = Date.now(); if (!AG.pend || AG.pend.v !== ok) { AG.pend = { v: ok, t: now }; return; }
+  if (now - AG.pend.t < 1500) return;
+  AG.fixOk = ok; AG.pend = null;
+  if (agOn()) (ok ? agUp : agWarn)();
+  if (S.settings.voiceGuide) say(ok ? 'FIXED 복귀. 측량할 수 있습니다' : 'FIXED 해제. 측량하지 마세요', { force: true, interrupt: true });
+}
+function agUi() {
+  const on = agOn() || !!S.settings.voiceGuide, b = gv('audioTgl'); if (!b) return;
+  b.classList.toggle('on', on); b.textContent = on ? '🔊' : '🔇'; b.setAttribute('aria-pressed', on ? 'true' : 'false');
+}
+function agSet(on) {
+  S.settings.beepGuide = on; S.settings.voiceGuide = on; save(); VG.last = ''; AG.arrived = false;
+  if (gv('vGuide')) gv('vGuide').checked = on;
+  if (on) { agCtx(); agTone(660, 120); agTone(990, 160, { delay: 0.13 }); say('소리 안내를 켰습니다', { force: true, interrupt: true }); agSched(500); }
+  else { clearTimeout(AG.timer); AG.timer = null; try { ttsStop(); } catch (e) {} }
+  agUi(); if (tab === 'settings') renderSettings();
+}
+
+// 음성 안내: 찾기 화면에서 화면을 보지 않고 목표까지 이동 (거리별 간격: 10 m 밖 6초 · 3~10 m 4초 · 3 m 안 2.5초, 도착 시 1회 알림)
 function voiceGuide(g, t, tol) {
-  if (!S.settings.voiceGuide || tab !== 'stake') return; const now = Date.now(); if (now - VG.t < 2500) return;
+  if (tab !== 'stake') return; const now = Date.now(), fixOk = !!(L && L.fix === 'FIXED' && now - L.t < 3000);
+  AG.cur = { dist: g.dist, fwd: g.fwd, right: g.right, tol, pt: t.mode === 'pt', fixOk, t: now };
+  if (agOn() && !AG.timer) agSched(0);
+  if (!S.settings.voiceGuide || !fixOk || now - VG.t < 2500) return;                         // FIXED 가 아니면 말로도 안내하지 않는다
   if (g.dist <= tol) { if (!VG.arrived) { VG.arrived = true; VG.t = now; VG.last = ''; say('도착. 허용 오차 이내입니다', { force: true, interrupt: true }); } return; }
-  VG.arrived = false; const pt = t.mode === 'pt';
-  const parts = []; if (Math.abs(g.fwd) >= tol) parts.push((pt ? (g.fwd >= 0 ? '북 ' : '남 ') : (g.fwd >= 0 ? '전진 ' : '후진 ')) + spLen(g.fwd));
-  if (Math.abs(g.right) >= tol) parts.push((pt ? (g.right >= 0 ? '동 ' : '서 ') : (g.right >= 0 ? '우측 ' : '좌측 ')) + spLen(g.right));
-  const text = parts.join(', '); if (!text) return;
-  if (text !== VG.last || now - VG.t > 7000) { VG.last = text; VG.t = now; say(text, { force: true, interrupt: true }); }
+  VG.arrived = false;
+  const text = GL.guideWords(g, t.mode === 'pt', tol); if (!text) return;
+  const gap = g.dist > 10 ? 6000 : g.dist > 3 ? 4000 : 2500;
+  if (now - VG.t >= gap && (text !== VG.last || now - VG.t > 7000)) { VG.last = text; VG.t = now; say(text, { force: true, interrupt: true }); }
 }
 
 // 음성 인식 (Web Speech API — Android Chrome. 오디오는 브라우저 제공 서비스로 전송됨)
@@ -1500,7 +1562,10 @@ gv('vMic').onclick = startListen;
 gv('vSend').onclick = () => { const v = gv('vText').value; gv('vText').value = ''; handleUtterance(v, 'text'); };
 gv('vText').addEventListener('keydown', e => { if (e.key === 'Enter') gv('vSend').click(); });
 gv('vYes').onclick = () => handleUtterance('예', LASTVIA); gv('vNo').onclick = () => handleUtterance('아니요', LASTVIA);
-gv('vGuide').onchange = e => { S.settings.voiceGuide = e.target.checked; save(); VG.last = ''; };
+gv('vGuide').onchange = e => { S.settings.voiceGuide = e.target.checked; save(); VG.last = ''; agUi(); };
+gv('audioTgl').onclick = () => agSet(!(agOn() || S.settings.voiceGuide));
+gv('sVoice').onchange = e => { S.settings.voiceGuide = e.target.checked; save(); VG.last = ''; gv('vGuide').checked = e.target.checked; agUi(); };
+gv('beepTest').onclick = () => { agCtx(); agTone(500, 80, { pan: -0.8 }); agTone(800, 80, { pan: 0, delay: 0.5 }); agTone(1100, 80, { pan: 0.8, delay: 1.0 }); agChime(); };
 // 설정 ▸ AI 보조 해석
 function renderLlm() {
   const c = S.settings.llm; gv('llmOn').checked = !!c.on; gv('llmKey').value = c.key || ''; gv('llmModel').value = c.model || ''; gv('llmUrl').value = c.endpoint || '';

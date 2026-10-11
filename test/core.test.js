@@ -360,5 +360,31 @@ t('heightRef: 수신값 그대로 / 국가지오이드 환산', () => {
   assert(Number.isNaN(GL.heightRef(NaN, 21.5, 23.0, 'kn')));
 });
 
+// ── 소리 안내(눈 없이 찾아가기) ──
+t('beepPlan: 시작 거리 밖은 무음, 가까울수록 간격이 짧고 음이 높음, 허용 오차 이내는 도착', () => {
+  assert.strictEqual(GL.beepPlan(8, 0.03, 5), null);
+  const far = GL.beepPlan(5, 0.03, 5), mid = GL.beepPlan(2, 0.03, 5), nr = GL.beepPlan(0.2, 0.03, 5);
+  assert(far.interval > mid.interval && mid.interval > nr.interval, '간격 단조 감소');
+  assert(far.freq < mid.freq && mid.freq < nr.freq, '음높이 단조 증가');
+  near(far.interval, 1200, 15); assert(nr.interval >= 120 && nr.interval < 300);
+  assert.strictEqual(GL.beepPlan(0.03, 0.03, 5).arrived, true); assert.strictEqual(GL.beepPlan(0.01, 0.03, 5).arrived, true);
+  assert.strictEqual(GL.beepPlan(NaN, 0.03, 5), null);
+});
+t('panOf: 목표가 오른쪽이면 +, 왼쪽이면 −, 정면이면 0, 범위 −1~1', () => {
+  assert.strictEqual(GL.panOf(0, 5), 0); near(GL.panOf(5, 5), 1, 1e-12); near(GL.panOf(-2.5, 5), -0.5, 1e-12);
+  assert.strictEqual(GL.panOf(3, 0.1), 1); assert.strictEqual(GL.panOf(0, 0), 0);
+});
+t('spokenLen: 1 m 미만은 5 cm 단위 센티, 10 m 미만은 소수 1자리, 이상은 정수 미터', () => {
+  assert.strictEqual(GL.spokenLen(0.32), '30 센티'); assert.strictEqual(GL.spokenLen(-0.04), '5 센티'); assert.strictEqual(GL.spokenLen(2.46), '2.5 미터');
+  assert.strictEqual(GL.spokenLen(12.4), '12 미터'); assert.strictEqual(GL.spokenLen(-0.99), '1 미터');
+});
+t('guideWords: 큰 축부터 말하고 허용 오차 미만 축은 생략, 선형은 전진/우측, 점은 북/동', () => {
+  assert.strictEqual(GL.guideWords({ fwd: 3.2, right: -0.5 }, false, 0.03), '전진 3.2 미터, 좌측 50 센티');
+  assert.strictEqual(GL.guideWords({ fwd: 0.1, right: 4 }, false, 0.03), '우측 4.0 미터, 전진 10 센티');
+  assert.strictEqual(GL.guideWords({ fwd: -1, right: 0.01 }, false, 0.03), '후진 1 미터');
+  assert.strictEqual(GL.guideWords({ fwd: -6, right: 2 }, true, 0.03), '남 6.0 미터, 동 2.0 미터');
+  assert.strictEqual(GL.guideWords({ fwd: 0.01, right: 0.01 }, false, 0.03), '');
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

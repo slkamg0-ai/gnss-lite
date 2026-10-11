@@ -39,7 +39,19 @@ small{color:var(--mut);font-weight:500}
 #top .row2 .kv b{font-size:1.12rem}
 .badge{min-height:40px;min-width:72px;padding:0 8px;font-size:.95rem;letter-spacing:.02em;border-radius:10px}
 .badge.fixed{background:#16a34a}.badge.float{background:#d97706}.badge.dgps,.badge.single{background:#b45309}.badge.none{background:#7f1d1d}
-.warn{margin-top:6px;background:#fef3c7;color:#78350f;border-radius:8px;padding:6px 10px;font-size:.85rem;font-weight:700}
+.warn{margin-top:6px;background:#fef3c7;color:#78350f;border-radius:8px;padding:6px 10px;font-size:.85rem;font-weight:700;transition:background .4s,color .4s}
+/* 알림 줄: 붉은 점멸 = 측량 불가 · 주황 = 주의 · 차분한 녹색 숨쉬는 빛 = FIXED 정상 */
+.warn.ok{background:#166534;color:#dcfce7;animation:glowOk 3.8s ease-in-out infinite}
+.warn.caution{background:#ea580c;color:#fff;animation:glowWarn 1.5s ease-in-out infinite}
+.warn.bad{background:#dc2626;color:#fff;animation:glowBad .95s ease-in-out infinite}
+@keyframes glowOk{0%,100%{box-shadow:0 0 0 1px #22c55e66,0 0 6px #22c55e55}50%{box-shadow:0 0 0 1px #4ade80aa,0 0 18px #22c55e99}}
+@keyframes glowWarn{0%,100%{box-shadow:0 0 0 1px #fdba74,0 0 6px #fb923c99}50%{box-shadow:0 0 0 2px #fed7aa,0 0 20px #fb923c}}
+@keyframes glowBad{0%,100%{box-shadow:0 0 0 1px #fca5a5,0 0 6px #ef444499}50%{box-shadow:0 0 0 2px #fecaca,0 0 22px #ef4444}}
+.badge.fixed{box-shadow:0 0 12px #22c55e99}
+.badge.float{animation:glowWarn 1.5s ease-in-out infinite}.badge.dgps,.badge.single,.badge.none{animation:glowBad .95s ease-in-out infinite}
+@media (prefers-reduced-motion:reduce){.warn,.badge{animation:none!important}}
+.aBtn{flex:none;width:40px;min-height:40px;height:40px;padding:0;border-radius:50%;font-size:1.2rem;background:#e5e7eb;color:#374151;margin-left:8px}
+.aBtn.on{background:#16a34a;color:#fff;box-shadow:0 0 10px #22c55e88}
 
 main{flex:1;overflow-y:auto;padding:0 12px 12px;-webkit-overflow-scrolling:touch}
 .tab{padding-bottom:16px}

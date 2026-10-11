@@ -434,7 +434,34 @@
     return (isFinite(sep) ? alt + sep : alt) - N;
   }
 
-  const api = { parseGgf, geoidN, heightRef, CRS, toProjected, fromProjected, parseNmea, nmeaChecksumOk, nmeaChecksumAppend, makeLineBuffer, fixClass, fixFromAccuracy,
+  // ── 소리 안내(화면 없이 귀로 찾아가기) ──
+  // 시작 거리(start) 안에서 가까울수록 비프 간격이 짧아지고 음이 높아진다(1200→130 ms, 500→1100 Hz). 허용 오차(tol) 이내면 도착.
+  function beepPlan(dist, tol, start) {
+    if (!(dist >= 0) || !(start > tol)) return null;
+    if (dist <= tol) return { arrived: true };
+    if (dist > start) return null;
+    const x = (dist - tol) / (start - tol);
+    return { interval: Math.round(130 + 1070 * x), freq: Math.round(1100 - 600 * x) };
+  }
+  // 좌우 위치: 목표가 오른쪽이면 +1, 왼쪽이면 −1 (스테레오 팬). 거리가 아주 가까우면 0.3 m 로 막아 흔들림을 줄인다
+  function panOf(right, dist) { return dist > 0 ? Math.max(-1, Math.min(1, right / Math.max(dist, 0.3))) : 0; }
+  // 말로 읽을 거리: 1 m 미만은 5 cm 단위 "센티", 10 m 미만은 소수 1자리("1.0"은 "1"), 이상은 정수 미터
+  function spokenLen(v) {
+    v = Math.abs(v);
+    const cm = Math.round(v * 20) * 5;                                    // 5 cm 단위로 반올림
+    if (cm < 100) return (cm || 5) + ' 센티';
+    const m = v < 10 ? v.toFixed(1) : String(Math.round(v));
+    return (m === '1.0' ? '1' : m) + ' 미터';
+  }
+  // 안내 문구: 큰 축부터. 선형은 전진/후진·우측/좌측, 점은 북/남·동/서. 허용 오차 미만 축은 생략
+  function guideWords(g, isPt, tol) {
+    const parts = [];
+    if (Math.abs(g.fwd) >= tol) parts.push({ m: Math.abs(g.fwd), s: (isPt ? (g.fwd >= 0 ? '북 ' : '남 ') : (g.fwd >= 0 ? '전진 ' : '후진 ')) + spokenLen(g.fwd) });
+    if (Math.abs(g.right) >= tol) parts.push({ m: Math.abs(g.right), s: (isPt ? (g.right >= 0 ? '동 ' : '서 ') : (g.right >= 0 ? '우측 ' : '좌측 ')) + spokenLen(g.right) });
+    return parts.sort((a, b) => b.m - a.m).map(p => p.s).join(', ');
+  }
+
+  const api = { beepPlan, panOf, spokenLen, guideWords, parseGgf, geoidN, heightRef, CRS, toProjected, fromProjected, parseNmea, nmeaChecksumOk, nmeaChecksumAppend, makeLineBuffer, fixClass, fixFromAccuracy,
     qMul, qConj, qNorm, qRot, qToEnu, qFromDeviceOrientation, poleAxisFromLevel, tiltInfo, tiltCompensate, allowedTilt, yawOffsetFrom, azimuth, pairInfo, staName, makeStations, makeAlignment, alignInfo, polyStats, guide, cutFill, markText, meanSd, solveCalibration, applyCalibration, findOutlier, dxfBuilder, hyp };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.GL = api;
 })(typeof window !== 'undefined' ? window : globalThis);
