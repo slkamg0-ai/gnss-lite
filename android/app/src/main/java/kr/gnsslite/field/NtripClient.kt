@@ -54,11 +54,21 @@ class NtripClient(
         }
     }
 
+    /** 일부 VRS 캐스터는 GPGGA 만 받는다: 토커 GN/GB/GA 를 GP 로 바꾸고 체크섬을 다시 계산한다. */
+    private fun toGp(g: String): String {
+        if (!g.startsWith("${'$'}") || g.length < 7 || g.substring(3, 6) != "GGA" || g.startsWith("${'$'}GP")) return g
+        val star = g.indexOf('*')
+        val body = "GP" + g.substring(3, if (star > 0) star else g.length)
+        var c = 0
+        for (ch in body) c = c xor ch.code
+        return "${'$'}" + body + "*" + String.format("%02X", c)
+    }
+
     private fun session() {
         val s = Socket()
         socket = s
         s.connect(InetSocketAddress(host, port), 10_000)
-        s.soTimeout = 15_000
+        s.soTimeout = 10_000   // 응답 헤더 대기
         val out = s.getOutputStream()
         val inp = s.getInputStream()
         val auth = Base64.encodeToString("$user:$pass".toByteArray(), Base64.NO_WRAP)
@@ -78,6 +88,7 @@ class NtripClient(
         val first = head.lineSequence().first()
         if (!first.contains(" 200")) throw java.io.IOException("거부됨: " + first.take(60))
         onState("connected")
+        s.soTimeout = 1_000    // 이후엔 1초마다 깨어나 GGA 를 제때 올려 보낸다(읽기에 막혀 VRS 가 GGA 를 못 받는 문제 방지)
 
         val buf = ByteArray(4096)
         var lastGga = 0L
@@ -86,7 +97,7 @@ class NtripClient(
             val now = System.currentTimeMillis()
             if (now - lastGga >= 10_000) {
                 val g = gga()
-                if (g != null) { out.write((g.trim() + "\r\n").toByteArray()); out.flush(); lastGga = now }
+                if (g != null) { out.write((toGp(g.trim()) + "\r\n").toByteArray()); out.flush(); lastGga = now }
                 else lastGga = now - 9_000   // GGA 가 아직 없으면 1초 뒤 다시 시도
             }
             try {
@@ -94,7 +105,7 @@ class NtripClient(
                 if (n < 0) throw java.io.IOException("서버가 연결을 닫음")
                 if (n > 0) { rtcmBytes += n; lastData = System.currentTimeMillis(); onRtcm(buf, n) }
             } catch (_: java.net.SocketTimeoutException) {
-                if (System.currentTimeMillis() - lastData >= 14_000) throw java.io.IOException("RTCM 수신 없음")
+                if (System.currentTimeMillis() - lastData >= 25_000) throw java.io.IOException("RTCM 수신 없음(25초)")
             }
         }
     }
