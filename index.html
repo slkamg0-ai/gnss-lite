@@ -9,7 +9,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon-192.png">
-<link rel="stylesheet" href="style.css?v=18">
+<link rel="stylesheet" href="style.css?v=19">
 </head>
 <body>
 <header id="top">
@@ -277,6 +277,17 @@
     <p class="hint">찾기 화면의 🔊 버튼으로도 한 번에 켜고 끕니다. 시작 거리 안에 들어오면 소리가 나기 시작해 가까울수록 빨라지고 높아집니다. 이어폰이면 목표가 있는 쪽(왼/오른쪽)에서 소리가 납니다. 낮은 “두 번 삑”은 목표가 뒤쪽, “딩동”은 도착입니다. 낮은 경고음은 FIXED가 아니라는 뜻이니 측설을 멈추세요. 점 찾기에서는 방위를 몰라 좌우 위치는 쓰지 않습니다.</p>
   </div>
 
+  <div class="card" id="remoteCard" hidden>
+    <h3>클리커 (블루투스 리모컨)</h3>
+    <label class="chk2"><input id="rmMon" type="checkbox"> 입력 확인 켜기 — 클리커 버튼을 눌러 보세요</label>
+    <div id="rmDevs" class="list"></div>
+    <h4 class="rmh">받은 입력 (최근)</h4>
+    <div id="rmLog" class="rmlog"></div>
+    <h4 class="rmh">버튼 동작 연결</h4>
+    <div id="rmMap"></div>
+    <p class="hint">① 입력 확인을 켜고 클리커 버튼을 눌러, 위 목록에서 클리커 장치(예: JX-05)를 <b>클리커로 사용</b> 하세요. 폰 화면 터치 장치는 “숨기기”. ② 장치가 지정되면 버튼마다 받은 입력이 아래에 쌓이니 동작을 고르세요. ③ 입력 확인을 끄면 연결한 동작이 실행됩니다. 지정된 장치의 입력은 화면 탭이나 볼륨 변경으로 새지 않습니다. 길게(0.7초 이상) 누른 키는 따로 연결할 수 있고, 연속 입력은 0.6초 안에는 무시합니다. FIXED가 아니면 확정 측정은 평소처럼 막힙니다.</p>
+  </div>
+
   <div class="card" id="ttsCard">
     <h3>안내 음성 (선택)</h3>
     <p class="hint">기본은 폰 내장 음성입니다. ElevenLabs를 쓰면 자연스러운 한국어 음성이 나옵니다. 한 번 만든 문구는 <b>이 폰에 저장</b>되어 다시 쓸 때 무료·즉시·오프라인으로 재생되고, 만들지 못하면 기본 음성으로 대체됩니다. 전송 내용은 <b>안내 문구 글자</b>뿐입니다.</p>
@@ -353,6 +364,6 @@
 <script src="core.js?v=9"></script>
 <script src="dxf.js?v=6"></script>
 <script src="nlu.js?v=7"></script>
-<script src="app.js?v=25"></script>
+<script src="app.js?v=26"></script>
 </body>
 </html>

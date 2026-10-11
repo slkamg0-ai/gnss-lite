@@ -58,6 +58,8 @@ function refreshAll() { buildStake(); renderSurvey(); renderAreas(); renderSegs(
 if (S.settings.fixSd == null) S.settings.fixSd = 0.03;   // FIXED 로 인정하는 수평 추정 오차 한도(m), 0 이면 끔
 if (S.settings.beepGuide == null) Object.assign(S.settings, { beepGuide: false, beepVol: 0.7, beepStart: 5 });   // 소리 안내(근접 비프): 시작 거리 m, 볼륨 0.1~1
 if (S.settings.fixCheer == null) S.settings.fixCheer = true;   // FIXED 가 되면 한 번 유쾌하게 알림(차임 + 한마디)
+if (!S.settings.remote) S.settings.remote = {};
+{ const R = S.settings.remote; R.devs = R.devs || []; R.hide = R.hide || []; R.map = R.map || {}; R.sigs = R.sigs || {}; }   // 클리커: 지정 장치·숨긴 장치·버튼별 동작·받은 입력 종류
 if (S.settings.hRef == null) S.settings.hRef = 'rx';      // 높이 기준: 'rx' 수신기 고도 그대로 / 'kn' 국가지오이드(KNGeoid24) 정표고
 
 // 국가지오이드 격자(약 700 KB): 높이 기준을 'kn' 으로 쓸 때만 내려받는다(서비스워커가 캐시하므로 오프라인에서도 동작)
@@ -86,6 +88,10 @@ function noteErr(m) { if (!ERRS.length || ERRS[ERRS.length - 1].m !== m) { ERRS.
 function guard(tag, fn) { try { fn(); } catch (e) { noteErr(tag + ': ' + ((e && e.message) || e)); } }
 window.addEventListener('error', e => noteErr('js: ' + e.message + (e.lineno ? ' @' + e.lineno : '')));
 window.addEventListener('unhandledrejection', e => noteErr('promise: ' + ((e.reason && e.reason.message) || e.reason)));
+// 클리커(블루투스 리모컨, Android 앱의 InputBridge)
+const NIN = window.GLInput || null;
+const RM = { mon: false, log: [], devs: {}, lastAct: 0 };
+const RM_ACTIONS = { none: '동작 없음', measure: '확정 측정', next: '다음 측점', prev: '이전 측점', undo: '마지막 취소', sound: '소리 안내 켜기/끄기', again: '안내 다시 말하기', mode: '선형 ↔ 점 전환' };
 let L = null;            // 최신 에포크 {lat,lon,alt,fix,sats,hdop,sdH,sdV,src,raw,site,t}
 let sampler = null, dirty = true, tab = 'stake';
 let IMU = null, imuTap = null;   // imuTap: IMU 수신 이벤트 훅(캘리브레이션 수집)
@@ -318,6 +324,68 @@ function nativePoll() {
   clearInterval(NPOLL);
   NPOLL = setInterval(() => { try { NST = JSON.parse(NATIVE.status()); if (S.settings.source === 'native') srcStatus(nativeStatusText(NST)); } catch (e) { noteErr('상태: ' + e.message); } }, 1500);
 }
+
+// ── 클리커(블루투스 리모컨): 앱이 입력 장치 이름으로 구분해 알려 준다. 입력 확인 → 장치 지정 → 버튼별 동작 연결 ──
+function rmSend() { if (!NIN) return; try { NIN.setRemoteDevices(JSON.stringify(S.settings.remote.devs)); NIN.inputMonitor(RM.mon); } catch (e) { noteErr('클리커: ' + e.message); } }
+function rmSig(e) {
+  if (e.k === 'key') { const long = e.ms >= 700; return { sig: 'k:' + e.code + (long ? ':long' : ''), label: String(e.name || ('KEY ' + e.code)).replace('KEYCODE_', '') + (long ? ' (길게)' : '') }; }
+  if (e.k === 'touch') {
+    if (e.g === 'tap') { const c = e.px < 34 ? '좌' : e.px > 66 ? '우' : '중', r = e.py < 34 ? '상' : e.py > 66 ? '하' : '중'; return { sig: 't:tap:' + c + r, label: '탭 ' + c + '·' + r }; }
+    return { sig: 't:' + e.g, label: '스와이프 ' + ({ 'swipe-up': '↑', 'swipe-down': '↓', 'swipe-left': '←', 'swipe-right': '→' }[e.g] || e.g) };
+  }
+  if (e.k === 'scroll') return { sig: 's:' + (e.v > 0 ? 'up' : 'down'), label: '휠 ' + (e.v > 0 ? '↑' : '↓') };
+  return null;
+}
+function rmOnInput(json) {
+  let e; try { e = JSON.parse(json); } catch (x) { return; }
+  const R = S.settings.remote, s = rmSig(e); if (!s) return;
+  RM.devs[e.dev] = (RM.devs[e.dev] || 0) + 1;
+  const isRemote = R.devs.includes(e.dev);
+  if (isRemote && !R.sigs[s.sig]) { R.sigs[s.sig] = s.label; save(); }
+  if (RM.mon || !isRemote) {            // 입력 확인 중이거나 지정되지 않은 장치: 기록만 하고 동작은 하지 않는다
+    if (!R.hide.includes(e.dev)) { RM.log.unshift({ t: Date.now(), dev: e.dev, label: s.label, remote: isRemote }); if (RM.log.length > 12) RM.log.pop(); }
+    if (tab === 'settings') rmRender();
+    return;
+  }
+  rmAct(s.sig);
+}
+function rmAct(sig) {
+  const a = S.settings.remote.map[sig]; if (!a || a === 'none') return;
+  const now = Date.now(); if (now - RM.lastAct < 600) return; RM.lastAct = now;      // 반지는 실수로 겹쳐 눌리기 쉬우므로 0.6초 안의 연속 입력은 무시
+  const click = id => { const b = document.getElementById(id); if (b && !b.disabled) b.click(); };
+  if (a === 'measure') { if (tab === 'stake') click('btnShot'); else if (tab === 'survey') click('btnPt'); else { toast('찾기·측량 화면에서만 측정됩니다'); return; } }
+  else if (a === 'next' || a === 'prev') { if (tab !== 'stake') { toast('찾기 화면에서만 됩니다'); return; } click(a === 'next' ? 'btnNext' : 'btnPrev'); }
+  else if (a === 'undo') click('undoBtn');
+  else if (a === 'sound') click('audioTgl');
+  else if (a === 'again') { VG.last = ''; VG.t = 0; VG.arrived = false; }
+  else if (a === 'mode') { const b = document.querySelector('#modeSw button[data-mode="' + (S.stakeMode === 'pt' ? 'line' : 'pt') + '"]'); if (b) b.click(); }
+  agTone(988, 70); toast('클리커: ' + RM_ACTIONS[a]);
+}
+function rmRender() {
+  const card = $('#remoteCard'); if (!card) return; card.hidden = !NIN; if (!NIN) return;
+  const R = S.settings.remote;
+  $('#rmMon').checked = RM.mon;
+  const names = [...new Set(Object.keys(RM.devs).concat(R.devs))].filter(n => !R.hide.includes(n) || R.devs.includes(n)).sort((a, b) => (RM.devs[b] || 0) - (RM.devs[a] || 0));
+  $('#rmDevs').innerHTML = (names.map(n => `<div class="it"><div class="nm"><b>${esc(n)}</b><span>받은 입력 ${RM.devs[n] || 0}회${R.devs.includes(n) ? ' · 클리커로 사용 중' : ''}</span></div><button class="ghost sm" data-rmuse="${esc(n)}">${R.devs.includes(n) ? '사용 해제' : '클리커로 사용'}</button>${R.devs.includes(n) ? '' : `<button class="ghost sm" data-rmhide="${esc(n)}">숨기기</button>`}</div>`).join('') || '<p class="hint">입력 확인을 켜고 클리커 버튼을 눌러 보세요. 장치가 여기에 나타납니다.</p>') + (R.hide.length ? '<button class="ghost sm" data-rmshow="1">숨긴 장치 다시 보기</button>' : '');
+  $('#rmLog').innerHTML = RM.log.map(x => `<div class="${x.remote ? 'on' : ''}">${new Date(x.t).toLocaleTimeString('ko-KR')} ${esc(x.dev)} · ${esc(x.label)}</div>`).join('') || '(아직 받은 입력 없음)';
+  const opts = Object.entries(RM_ACTIONS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
+  $('#rmMap').innerHTML = Object.entries(R.sigs).map(([sig, label]) => `<div class="rmrow"><span>${esc(label)}</span><select data-rmmap="${esc(sig)}">${opts}</select></div>`).join('') || '<p class="hint">클리커로 지정한 장치에서 입력을 받으면 여기에 버튼이 하나씩 나타납니다.</p>';
+  $$('#rmMap select').forEach(sel => { sel.value = R.map[sel.dataset.rmmap] || 'none'; });
+}
+if ($('#remoteCard')) {
+  $('#remoteCard').addEventListener('click', ev => {
+    const b = ev.target.closest('button'); if (!b) return; const R = S.settings.remote;
+    if (b.dataset.rmuse) { const n = b.dataset.rmuse, i = R.devs.indexOf(n); if (i >= 0) R.devs.splice(i, 1); else R.devs.push(n); save(); rmSend(); rmRender(); }
+    else if (b.dataset.rmhide) { R.hide.push(b.dataset.rmhide); save(); rmRender(); }
+    else if (b.dataset.rmshow) { R.hide = []; save(); rmRender(); }
+  });
+  $('#remoteCard').addEventListener('change', ev => {
+    const t = ev.target, R = S.settings.remote;
+    if (t.id === 'rmMon') { RM.mon = t.checked; rmSend(); rmRender(); }
+    else if (t.dataset && t.dataset.rmmap) { R.map[t.dataset.rmmap] = t.value; save(); }
+  });
+}
+window.glNative.onInput = rmOnInput;
 function nativeStart() {
   if (!NATIVE) { srcStatus('이 소스는 Android 앱에서만 쓸 수 있습니다'); return; }
   nativePoll();
@@ -411,6 +479,7 @@ if (!S.curSeg || !S.segs.find(s => s.id === S.curSeg)) S.curSeg = S.segs[0].id;
 
 // ───────────── 화면 전환 ─────────────
 function go(t) {
+  if (t !== 'settings' && RM.mon) { RM.mon = false; rmSend(); }
   tab = t; $$('.tab').forEach(x => x.hidden = x.id !== 'tab-' + t); $$('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.go === t));
   if (t === 'stake') buildStake(); if (t === 'survey') { renderSurvey(); renderAreas(); } if (t === 'segs') renderSegs(); if (t === 'settings') renderSettings();
   if (t === 'map') { requestAnimationFrame(fitView); renderLayers(); dxfInfoUpdate(); }
@@ -738,7 +807,7 @@ function hRefText() {
 function renderSettings() {
   const s = S.settings;
   $('#crs').innerHTML = Object.entries(GL.CRS).map(([k, v]) => `<option value="${k}">${v.name}</option>`).join(''); $('#crs').value = s.crs;
-  $('#beepGuide').checked = !!s.beepGuide; $('#fixCheer').checked = !!s.fixCheer; $('#sVoice').checked = !!s.voiceGuide; $('#beepStart').value = s.beepStart; $('#beepVol').value = s.beepVol; agUi();
+  $('#beepGuide').checked = !!s.beepGuide; $('#fixCheer').checked = !!s.fixCheer; $('#sVoice').checked = !!s.voiceGuide; $('#beepStart').value = s.beepStart; $('#beepVol').value = s.beepVol; agUi(); rmRender();
   $('#hRef').value = s.hRef; $('#hRefInfo').textContent = hRefText(); $('#antH').value = s.antH; $('#avgSec').value = s.avgSec; $('#tol').value = s.tol; $('#reqFix').checked = s.reqFix; $('#fixSd').value = s.fixSd; $('#baud').value = s.baud;
   $$('#srcSel button').forEach(b => b.classList.toggle('on', b.dataset.src === s.source));
   $('#serialBox').hidden = s.source !== 'serial'; $('#bleBox').hidden = s.source !== 'ble'; $('#nativeBox').hidden = s.source !== 'native';
@@ -1661,6 +1730,7 @@ idb.get('dxf').then(d => { if (d && S.dxf && S.dxf.name) { DXFD = d; dirty = tru
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}   // 저장공간 부족 시 브라우저가 앱 데이터를 지우지 않도록 요청(설치된 앱은 보통 허용)
 if (NATIVE && !S.settings.nativeInit) { S.settings.nativeInit = true; S.settings.source = 'native'; save(); }   // Android 앱 첫 실행 시 내장 USB 를 기본 소스로
 if (S.settings.hRef === 'kn') loadGeoid();
+rmSend();
 startSource(); buildStake(); renderAreas(); requestAnimationFrame(frame);
 loadShotLog(); lastSig = dataSig(); refreshUndoBtn(); $('#undoGo').onclick = undo; $('#undoBtn').onclick = undo;
 })();

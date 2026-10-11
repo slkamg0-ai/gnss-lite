@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>클리커 키 확인</title>
+<style>
+:root{--bg:#f3f6ea;--ink:#1b2312;--mut:#5e6a4f;--pri:#4a7d2a;--lime:#c9e136;--top:#1f2a14;--line:#d9dfc9}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 "Noto Sans KR","Malgun Gothic",system-ui,sans-serif}
+header{background:var(--top);color:#fff;padding:12px 16px}
+header h1{margin:0;font-size:1.1rem}
+header p{margin:4px 0 0;color:#b9c89c;font-size:.85rem}
+main{max-width:760px;margin:0 auto;padding:12px 14px 40px}
+#pad{display:block;width:100%;border:2px dashed var(--pri);border-radius:14px;background:#fff;padding:18px;text-align:center;outline:none;cursor:pointer}
+#pad:focus{border-style:solid;box-shadow:0 0 0 4px #c9e13688}
+#pad .big{font-size:2.4rem;font-weight:800;min-height:3rem;word-break:break-all}
+#pad .sub{color:var(--mut);font-size:.9rem;min-height:1.4rem}
+#pad .hint{color:var(--mut);font-size:.82rem;margin-top:8px}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+button{border:0;border-radius:10px;min-height:40px;padding:0 14px;background:var(--pri);color:#fff;font:inherit;font-weight:700;cursor:pointer}
+button.ghost{background:#e6ebd8;color:var(--ink)}
+table{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--line);border-radius:10px;overflow:hidden;font-size:.86rem}
+th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;font-variant-numeric:tabular-nums}
+th{background:#eef2de;font-weight:700}
+h2{font-size:.98rem;margin:16px 0 6px}
+#log{max-height:340px;overflow:auto;background:#1b2312;color:#e6f3b0;border-radius:10px;padding:8px 10px;font:12.5px/1.5 ui-monospace,Consolas,monospace;white-space:pre}
+.tag{display:inline-block;padding:0 6px;border-radius:6px;background:var(--lime);color:var(--top);font-weight:700;font-size:.78rem}
+</style>
+</head>
+<body>
+<header>
+  <h1>클리커 키 확인</h1>
+  <p>아래 상자를 한 번 눌러 선택한 뒤, 클리커 버튼을 하나씩 눌러 보세요. 짧게/길게/두 번도 눌러 보세요.</p>
+</header>
+<main>
+  <div id="pad" tabindex="0" role="button" aria-label="키 입력 확인 상자">
+    <div class="big" id="big">여기를 눌러 선택 → 클리커 버튼 누르기</div>
+    <div class="sub" id="sub"></div>
+    <div class="hint">받은 입력은 키보드·마우스·휠·터치·미디어 키로 구분해서 아래에 기록합니다. 페이지가 선택(포커스)돼 있어야 받을 수 있습니다.</div>
+  </div>
+
+  <div class="row">
+    <button id="copy">기록 복사</button>
+    <button id="clear" class="ghost">지우기</button>
+  </div>
+
+  <h2>버튼별 요약 <span class="tag" id="cnt">0</span></h2>
+  <table id="sum"><thead><tr><th>입력</th><th>key</th><th>code</th><th>keyCode</th><th>횟수</th><th>길게(≥0.6초)</th></tr></thead><tbody></tbody></table>
+
+  <h2>시간순 기록</h2>
+  <div id="log"></div>
+</main>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const pad = $('pad'), big = $('big'), sub = $('sub'), logEl = $('log'), tb = $('sum').querySelector('tbody');
+  const sum = new Map(), downAt = new Map(); let n = 0, last = 0, text = '';
+  const fmt = v => (v === undefined || v === '' || v === ' ') ? (v === ' ' ? '(스페이스)' : '-') : v;
+
+  function add(kind, key, code, keyCode, extra) {
+    const now = performance.now(), gap = last ? Math.round(now - last) : 0; last = now; n++;
+    const line = `${String(n).padStart(3)}  +${String(gap).padStart(5)}ms  ${kind.padEnd(8)} key=${fmt(key)}  code=${fmt(code)}  keyCode=${fmt(keyCode)}${extra ? '  ' + extra : ''}`;
+    text += line + '\n'; logEl.textContent += line + '\n'; logEl.scrollTop = logEl.scrollHeight;
+    $('cnt').textContent = n;
+  }
+  function bump(kind, key, code, keyCode, long) {
+    const k = kind + '|' + key + '|' + code; let r = sum.get(k);
+    if (!r) { r = { kind, key, code, keyCode, n: 0, long: 0 }; sum.set(k, r); }
+    r.n++; if (long) r.long++;
+    tb.innerHTML = [...sum.values()].map(x => `<tr><td>${x.kind}</td><td>${fmt(x.key)}</td><td>${fmt(x.code)}</td><td>${fmt(x.keyCode)}</td><td>${x.n}</td><td>${x.long}</td></tr>`).join('');
+  }
+  function show(title, detail) { big.textContent = title; sub.textContent = detail || ''; }
+
+  // 입력창으로 글자가 들어오는 제품도 있어 포커스 유지, 기본 동작(스크롤·뒤로가기 등)은 막아 어떤 키인지 보이게 한다
+  window.addEventListener('keydown', e => {
+    const id = e.code + '|' + e.key; if (!e.repeat) downAt.set(id, performance.now());
+    add('keydown', e.key, e.code, e.keyCode, (e.repeat ? 'repeat ' : '') + (e.ctrlKey ? 'Ctrl ' : '') + (e.shiftKey ? 'Shift ' : '') + (e.altKey ? 'Alt ' : '') + (e.metaKey ? 'Meta ' : ''));
+    if (!e.repeat) bump('키보드', e.key, e.code, e.keyCode, false);
+    show(fmt(e.key), `code ${fmt(e.code)} · keyCode ${fmt(e.keyCode)}${e.repeat ? ' · 누르는 중(반복)' : ''}`);
+    e.preventDefault();
+  }, true);
+  window.addEventListener('keyup', e => {
+    const id = e.code + '|' + e.key, t0 = downAt.get(id), ms = t0 ? Math.round(performance.now() - t0) : null, long = ms !== null && ms >= 600;
+    add('keyup', e.key, e.code, e.keyCode, ms !== null ? `눌린 시간 ${ms}ms${long ? ' (길게)' : ''}` : '');
+    if (long) bump('키보드', e.key, e.code, e.keyCode, true);
+    e.preventDefault();
+  }, true);
+  window.addEventListener('wheel', e => { add('wheel', 'deltaY ' + Math.round(e.deltaY), '', '', 'deltaX ' + Math.round(e.deltaX)); bump('휠', e.deltaY > 0 ? '아래' : '위', '', '', false); show('휠 ' + (e.deltaY > 0 ? '↓' : '↑'), 'deltaY ' + Math.round(e.deltaY)); }, { passive: true });
+  // 터치스크린형 클리커는 버튼마다 "정해진 위치를 탭/스와이프"한다. 위치(화면 대비 %)와 종류(touch/mouse/pen), 이동 거리까지 기록한다
+  const down = new Map();
+  const pct = e => `${(100 * e.clientX / innerWidth).toFixed(1)}%,${(100 * e.clientY / innerHeight).toFixed(1)}%`;
+  window.addEventListener('pointerdown', e => {
+    if (e.target === pad || pad.contains(e.target)) pad.focus();
+    down.set(e.pointerId, { x: e.clientX, y: e.clientY, t: performance.now() });
+    add('ptr-down', e.pointerType, 'id ' + e.pointerId + ' btn ' + e.button, '', `${pct(e)}  px(${Math.round(e.clientX)},${Math.round(e.clientY)})  pressure ${e.pressure}`);
+    bump('포인터', e.pointerType + ' ' + pct(e), 'id ' + e.pointerId, '', false);
+    show('탭 ' + e.pointerType, pct(e));
+  }, true);
+  window.addEventListener('pointerup', e => {
+    const d = down.get(e.pointerId); down.delete(e.pointerId);
+    const dx = d ? Math.round(e.clientX - d.x) : 0, dy = d ? Math.round(e.clientY - d.y) : 0, ms = d ? Math.round(performance.now() - d.t) : 0;
+    const dir = Math.abs(dx) < 8 && Math.abs(dy) < 8 ? '탭' : (Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? '→스와이프' : '←스와이프') : (dy > 0 ? '↓스와이프' : '↑스와이프'));
+    add('ptr-up', e.pointerType, 'id ' + e.pointerId, '', `${dir}  이동 dx ${dx} dy ${dy}  ${ms}ms`);
+    if (dir !== '탭') show(dir, `dx ${dx} dy ${dy} · ${e.pointerType}`);
+  }, true);
+  window.addEventListener('contextmenu', e => { add('ctxmenu', '', '', '', ''); e.preventDefault(); });
+  // 미디어 키(재생/다음/이전)는 오디오가 재생 중일 때 미디어 세션으로 전달된다: 무음 재생을 시작하면 받을 수 있다
+  if ('mediaSession' in navigator) {
+    ['play', 'pause', 'previoustrack', 'nexttrack', 'seekbackward', 'seekforward', 'stop'].forEach(a => { try { navigator.mediaSession.setActionHandler(a, () => { add('media', a, '', '', ''); bump('미디어', a, '', '', false); show('미디어: ' + a, ''); }); } catch (_) {} });
+    pad.addEventListener('click', () => { try { const a = new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA='); a.loop = true; a.play().catch(() => {}); navigator.mediaSession.playbackState = 'playing'; navigator.mediaSession.metadata = new MediaMetadata({ title: '키 확인 중' }); } catch (_) {} }, { once: true });
+  }
+  $('copy').onclick = async () => { try { await navigator.clipboard.writeText(text); $('copy').textContent = '복사됨 ✓'; setTimeout(() => $('copy').textContent = '기록 복사', 1500); } catch (_) { const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); } };
+  $('clear').onclick = () => { text = ''; logEl.textContent = ''; sum.clear(); tb.innerHTML = ''; n = 0; $('cnt').textContent = 0; show('지웠습니다', ''); pad.focus(); };
+  pad.focus();
+})();
+</script>
+</body>
+</html>

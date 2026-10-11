@@ -290,3 +290,10 @@ summary{min-height:28px;font-size:.92rem}
 button.primary:active,.seg3 button.on:active{background:var(--pri2)}
 .sbar i{background:var(--lime)}
 .mic{background:var(--top)}
+
+/* 클리커 카드 */
+.rmh{margin:10px 0 4px;font-size:.88rem;color:var(--mut)}
+.rmlog{background:#1b2312;color:#e6f3b0;border-radius:10px;padding:6px 10px;font:12.5px/1.6 ui-monospace,Consolas,monospace;min-height:34px;max-height:180px;overflow:auto}
+.rmlog div.on{color:var(--lime)}
+.rmrow{display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:center;margin:5px 0;font-size:.9rem}
+.rmrow span{font-weight:700;word-break:keep-all}

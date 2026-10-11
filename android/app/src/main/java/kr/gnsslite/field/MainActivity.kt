@@ -6,6 +6,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.hardware.usb.UsbManager
 import android.os.Bundle
+import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.WindowManager
 import android.webkit.GeolocationPermissions
 import android.webkit.PermissionRequest
@@ -25,6 +27,7 @@ import androidx.webkit.WebViewAssetLoader
 class MainActivity : AppCompatActivity() {
     private lateinit var web: WebView
     private lateinit var bridge: GnssBridge
+    private lateinit var input: InputBridge
 
     private val origin = "https://appassets.androidplatform.net"
     private val startUrl = "$origin/app/www/index.html"
@@ -75,6 +78,8 @@ class MainActivity : AppCompatActivity() {
 
         bridge = GnssBridge(this, web)
         web.addJavascriptInterface(bridge, "GLNative")
+        input = InputBridge(web)                                  // 블루투스 클리커(HID) 입력: 장치 이름으로 구분해 웹앱에 전달
+        web.addJavascriptInterface(input, "GLInput")
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED)
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.ACCESS_FINE_LOCATION), 1)
@@ -85,6 +90,11 @@ class MainActivity : AppCompatActivity() {
 
         web.loadUrl(startUrl)
     }
+
+    // 클리커로 지정된 장치의 입력은 소비하고, 그 외(폰 화면·폰 버튼)는 그대로 통과시킨다
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean = if (::input.isInitialized && input.onKey(event)) true else super.dispatchKeyEvent(event)
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean = if (::input.isInitialized && input.onTouch(ev)) true else super.dispatchTouchEvent(ev)
+    override fun dispatchGenericMotionEvent(ev: MotionEvent): Boolean = if (::input.isInitialized && input.onScroll(ev)) true else super.dispatchGenericMotionEvent(ev)
 
     override fun onResume() {
         super.onResume()
