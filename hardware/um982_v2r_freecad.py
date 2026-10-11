@@ -36,7 +36,8 @@ def say(*a):
 
 PARAMS = [
     ('# 외형', None, None),
-    ('body_w', 34.0, '아래 몸체 사각 폭(x)'), ('body_d', 16.6, '아래 몸체 사각 두께(y)'), ('body_r', 5.0, '사각 모서리 반경'), ('rwall', 2.4, '사각 몸체 벽 두께'), ('head_fillet', 1.5, '머리 치마 아래 바깥 모서리 둥글림 R'), ('sh_t', 3.0, '사각→원통 전환 판 두께(원통 안쪽 공간이 사각 몸체 밖으로 뚫리는 곳을 막음)'),
+    ('body_w', 34.0, '아래 몸체 사각 폭(x)'), ('body_d', 16.6, '아래 몸체 사각 두께(y)'), ('body_r', 5.0, '사각 모서리 반경'), ('rwall', 2.4, '사각 몸체 벽 두께'), ('head_fillet', 1.5, '머리 치마 아래 바깥 모서리 둥글림 R'),
+    ('logo_size', 20.0, '로고 한 변(mm) — princedotcom_markB_20mm.svg'), ('logo_depth', 0.6, '로고 음각 깊이'), ('logo_zc', 26.0, '로고 중심 높이(z)'), ('sh_t', 3.0, '사각→원통 전환 판 두께(원통 안쪽 공간이 사각 몸체 밖으로 뚫리는 곳을 막음)'),
     ('D_body', 38.0, '몸체 바깥 지름(안테나 Ø38 과 같게)'), ('wall', 3.0, '몸체 벽 두께'),
     ('D_head', 50.0, '머리 바깥 지름'), ('floor_t', 3.0, '바닥 두께'),
     ('# 가정: 보드 WTRTK-980 (실측 필요)', None, None),
@@ -225,14 +226,43 @@ b_gasket = feat('Body_UsbGasketGroove', gasket)
 usb = rrect(v['usb_w'], v['usb_h'], v['usb_r'], y_f - rw - 1.0, y_f + 1, z_u)
 b_usb = feat('Body_UsbHole', usb)
 
+# 로고(princedotcom_markB, viewBox 8 8 104 104 → 20 mm): 평평한 -y 면(USB 반대쪽 정면)에 음각. 정면(-y)에서 바라보면 바르게 읽힌다.
+# 외곽 프레임(두 윤곽, 짝-홀 규칙) · P 글자(바깥+안쪽 구멍) · 점. 좌표는 SVG 단위(위가 작은 y)
+LOGO = {'frame': [[(8, 8), (92, 8), (112, 28), (112, 112), (28, 112), (8, 92)], [(16, 16), (88.686, 16), (104, 31.314), (104, 104), (31.314, 104), (16, 88.686)]],
+        'letter': [[(37, 30), (73, 30), (83, 40), (83, 58), (73, 68), (53, 68), (53, 90), (37, 90)], [(53, 44), (69, 44), (69, 54), (53, 54)]],
+        'dot': [[(69, 76), (83, 76), (83, 90), (69, 90)]]}
+
+
+def logo_solid(y_face, depth, zc, size):
+    sc = size / 104.0
+    y0 = y_face - 1.0                                   # 면 바깥 1 mm 에서 시작해 면 + depth 까지 파낸다
+    out = None
+    for rings in LOGO.values():
+        faces = []
+        for ring in rings:
+            pts = [vec((x - 60) * sc, y0, zc + (60 - y) * sc) for x, y in ring]
+            faces.append(Part.Face(Part.makePolygon(pts + [pts[0]])))
+        f = faces[0]
+        for hole in faces[1:]:
+            f = f.cut(hole)
+        sol = f.extrude(vec(0, 1.0 + depth, 0))
+        out = sol if out is None else out.fuse(sol)
+    return out
+
+
+b_logo = feat('Body_LogoEngrave', logo_solid(-bd / 2, v['logo_depth'], v['logo_zc'], v['logo_size']))
+_lb = b_logo.Shape.BoundBox
+assert abs(_lb.XMax) <= bw / 2 - br and _lb.ZMin > v['floor_t'] and _lb.ZMax < z_c - 1, '로고가 평평한 면 밖으로 나감'
+
 b1 = fuse('Body_WithRails', [b_shell, b_rails, b_lugs])
 b2 = cut('Body_Slotted', b1, b_slits)
 b3 = cut('Body_Grooved', b2, b_groove)
 b3b = cut('Body_UsbGasket', b3, b_gasket)
 b4 = cut('Body_UsbHole', b3b, b_usb)
+b5 = cut('Body_Logo', b4, b_logo)
 st_core = cyl('Stud_Core', '(stud_major - stud_clear) / 2 - 1.35', 'stud_len + 0.5', z='-stud_len')
 st_thr = thread_ridge('Stud_Thread', '(stud_major - stud_clear) / 2 - 1.35 - 0.1', '-stud_len + 1.0', 'stud_len - 1.0', 'stud_pitch', 1.35 + 0.1, 2.0, 0.25)
-body = fuse('Body', [b4, st_core, st_thr])
+body = fuse('Body', [b5, st_core, st_thr])
 
 # ───────────────────────── 머리 ─────────────────────────
 h_out = cyl('Head_Outer', 'R_head', 'z_top - z_s', z='z_s')
