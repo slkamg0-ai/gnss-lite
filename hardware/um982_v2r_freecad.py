@@ -36,7 +36,8 @@ def say(*a):
 
 PARAMS = [
     ('# 외형', None, None),
-    ('body_w', 34.0, '아래 몸체 사각 폭(x)'), ('body_d', 16.6, '아래 몸체 사각 두께(y)'), ('body_r', 5.0, '사각 모서리 반경'), ('rwall', 2.4, '사각 몸체 벽 두께'), ('head_fillet', 1.5, '머리 치마 아래 바깥 모서리 둥글림 R'),
+    ('body_w', 34.0, '아래 몸체 사각 폭(x)'), ('body_d', 16.6, '아래 몸체 사각 두께(y)'), ('body_r', 5.0, '사각 모서리 반경'), ('rwall', 2.4, '사각 몸체 벽 두께'), ('pat_n', 12, '옆면 문양 반복 수(30° 간격)'), ('pat_depth', 0.7, '문양 음각 깊이'), ('pat_w', 1.2, '문양 선 폭'), ('pat_z0', 58.5, '문양 시작 높이(z)'),
+    ('head_chamfer_bot', 1.5, '머리 치마 아래 바깥 모서리 직선 모깎기(45°) 변 길이'), ('head_chamfer_top', 2.0, '머리 윗면 바깥 모서리 직선 모깎기(45°) 변 길이'),
     ('logo_size', 20.0, '로고 한 변(mm) — princedotcom_markB_20mm.svg'), ('logo_depth', 0.6, '로고 음각 깊이'), ('logo_zc', 26.0, '로고 중심 높이(z)'), ('sh_t', 3.0, '사각→원통 전환 판 두께(원통 안쪽 공간이 사각 몸체 밖으로 뚫리는 곳을 막음)'),
     ('D_body', 38.0, '몸체 바깥 지름(안테나 Ø38 과 같게)'), ('wall', 3.0, '몸체 벽 두께'),
     ('D_head', 50.0, '머리 바깥 지름'), ('floor_t', 3.0, '바닥 두께'),
@@ -293,15 +294,52 @@ ins = [cyl('Head_Insert%d' % i, 'ant_insert_d / 2', 'ant_insert_depth + 1', x=sx
 h_cuts = fuse('Head_Cuts', [h_neck, h_face, h_track] + ins)
 head = cut('Head', h_shell, h_cuts)
 
+
+# 머리 옆면(곡면) 사이버풍 문양: PCB 회로 배선처럼 수직선 + 45° 꺾임 + 사각 노드. 한 칸(30°)을 평면에 그려 반지름 방향으로 뚫고
+# 바깥 껍질(깊이 pat_depth)과 교차시켜 곡면에서도 깊이가 일정하게 한 뒤 둘레로 pat_n 번 복사해 판다.
+def pattern_tool():
+    n, w, dep, z0, R = int(v['pat_n']), v['pat_w'], v['pat_depth'], v['pat_z0'], R_head
+    traces = [[(-4.5, 0), (-4.5, 5), (-2.5, 7), (-2.5, 13), (-4.5, 15), (-4.5, 20)],
+              [(4.5, 3), (4.5, 8), (2.5, 10), (2.5, 16), (4.5, 18), (4.5, 23)]]
+    pads = [(-4.5, 20), (4.5, 23), (-4.5, 0), (4.5, 3)]          # 배선 양 끝의 사각 노드
+    polys = []
+    for tr in traces:
+        for (x1, y1), (x2, y2) in zip(tr[:-1], tr[1:]):
+            L = math.hypot(x2 - x1, y2 - y1)
+            ux, uy, h = (x2 - x1) / L, (y2 - y1) / L, w / 2
+            a, b = (x1 - ux * h, y1 - uy * h), (x2 + ux * h, y2 + uy * h)           # 사각 끝으로 꺾이는 곳을 메운다
+            polys.append([(a[0] - uy * h, a[1] + ux * h), (b[0] - uy * h, b[1] + ux * h), (b[0] + uy * h, b[1] - ux * h), (a[0] + uy * h, a[1] - ux * h)])
+    for cx, cy in pads:
+        k = 1.3
+        polys.append([(cx - k, cy - k), (cx + k, cy - k), (cx + k, cy + k), (cx - k, cy + k)])
+    mod = None
+    for poly in polys:                                            # 모듈 평면: 접선 방향 = y, 높이 = z, 바깥쪽 = +x
+        pts = [vec(R + 2.0, u, z0 + t) for u, t in poly]
+        sol = Part.Face(Part.makePolygon(pts + [pts[0]])).extrude(vec(-(2.0 + dep + 1.5), 0, 0))
+        mod = sol if mod is None else mod.fuse(sol)
+    shell = Part.makeCylinder(R + 3.0, 40.0, vec(0, 0, z0 - 5)).cut(Part.makeCylinder(R - dep, 40.0, vec(0, 0, z0 - 5)))
+    mod = mod.common(shell)
+    return Part.makeCompound([rotz(mod, i * 360.0 / n) for i in range(n)])
+
+
+head = cut('Head_Patterned', head, feat('Head_Pattern', pattern_tool()))
+
 doc.recompute()
-# 머리 치마 아래 바깥 모서리(R_head 원, z=z_s) 둥글림: 원래 Head 는 두고 Head_Fillet 가 최종 머리가 된다
+# 머리의 아래(치마 끝, z=z_s)·윗면(z=z_top) 바깥 모서리(R_head 원)를 곡면이 아닌 직선 모깎기(45° 챔퍼)로 마무리한다.
+# 원래 Head 는 두고 Head_Chamfer 가 최종 머리가 된다
 head_raw = head
-fe = [i for i, e in enumerate(head_raw.Shape.Edges, 1)
-      if e.Curve.TypeId == 'Part::GeomCircle' and abs(e.Curve.Radius - R_head) < 0.01 and abs(e.BoundBox.ZMin - z_s) < 0.05 and abs(e.BoundBox.ZMax - z_s) < 0.05]
-assert len(fe) == 1, '머리 아래 바깥 모서리를 찾지 못함: %s' % fe
-head = doc.addObject('Part::Fillet', 'Head_Fillet')
+
+
+def outer_edge(z):
+    r = [i for i, e in enumerate(head_raw.Shape.Edges, 1)
+         if e.Curve.TypeId == 'Part::GeomCircle' and abs(e.Curve.Radius - R_head) < 0.01 and abs(e.BoundBox.ZMin - z) < 0.05 and abs(e.BoundBox.ZMax - z) < 0.05]
+    assert len(r) == 1, '머리 바깥 모서리(z=%.1f)를 찾지 못함: %s' % (z, r)
+    return r[0]
+
+
+head = doc.addObject('Part::Chamfer', 'Head_Chamfer')
 head.Base = head_raw
-head.Edges = [(fe[0], v['head_fillet'], v['head_fillet'])]
+head.Edges = [(outer_edge(z_s), v['head_chamfer_bot'], v['head_chamfer_bot']), (outer_edge(z_top), v['head_chamfer_top'], v['head_chamfer_top'])]
 doc.recompute()
 bad = [o.Name for o in doc.Objects if 'Invalid' in o.State or 'Error' in ' '.join(o.State)]
 say('재계산 오류 객체:', bad or '없음')
@@ -336,7 +374,7 @@ say('외형 부피 약 %.0f cm³ (눕힌 마운트 Ø96.5x40 = %.0f cm³)' % (vo
 
 ref = feat('Ref_BoardKeepout', KO)
 doc.recompute()
-FINAL = ('Body', 'Head_Fillet', 'Ref_BoardKeepout')
+FINAL = ('Body', 'Head_Chamfer', 'Ref_BoardKeepout')
 for o in doc.Objects:
     if o.Name != 'Params':
         o.Visibility = o.Name in FINAL
