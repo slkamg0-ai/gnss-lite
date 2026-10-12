@@ -9,7 +9,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon-192.png">
-<link rel="stylesheet" href="style.css?v=19">
+<link rel="stylesheet" href="style.css?v=20">
 </head>
 <body>
 <header id="top">
@@ -137,12 +137,13 @@
     <div id="pick" class="pick" hidden></div>
   </div>
   <div class="row gap exports">
-    <button id="xDxf" class="ghost">DXF</button>
+    <button id="xXlsx" class="primary">엑셀 .xlsx</button>
+    <button id="xDxf" class="primary">DXF</button>
+    <button id="xPrint" class="primary">출력 / PDF</button>
     <button id="xCsv" class="ghost">점 CSV</button>
     <button id="xSheet" class="ghost">선형표 CSV</button>
     <button id="xFind" class="ghost">찾기결과 CSV</button>
     <button id="xArea" class="ghost">면적 CSV</button>
-    <button id="xPrint" class="primary">출력 / PDF</button>
   </div>
 </section>
 
@@ -364,6 +365,7 @@
 <script src="core.js?v=9"></script>
 <script src="dxf.js?v=6"></script>
 <script src="nlu.js?v=7"></script>
-<script src="app.js?v=26"></script>
+<script src="xlsx.js?v=1"></script>
+<script src="app.js?v=27"></script>
 </body>
 </html>

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "test": "node test/core.test.js && node test/dxf.test.js && node test/nlu.test.js",
+    "test": "node test/core.test.js && node test/dxf.test.js && node test/nlu.test.js && node test/xlsx.test.js",
     "build:site": "node scripts/build-site.js",
     "android:sync": "node scripts/sync-android.js",
     "build:sdk":"esbuild vendor/sdk-entry.js --bundle --format=iife --platform=browser --minify --outfile=vendor/anthropic.bundle.js"

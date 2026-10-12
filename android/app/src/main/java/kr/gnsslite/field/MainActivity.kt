@@ -80,6 +80,7 @@ class MainActivity : AppCompatActivity() {
         web.addJavascriptInterface(bridge, "GLNative")
         input = InputBridge(web)                                  // 블루투스 클리커(HID) 입력: 장치 이름으로 구분해 웹앱에 전달
         web.addJavascriptInterface(input, "GLInput")
+        web.addJavascriptInterface(FileBridge(this, web), "GLFile")   // 내보내기(파일 저장·공유)·인쇄
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED)
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.ACCESS_FINE_LOCATION), 1)

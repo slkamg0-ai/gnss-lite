@@ -1241,8 +1241,14 @@ $('#logList').onclick = e => { const b = e.target.closest('[data-lx]'); if (!b) 
 
 // ── 내보내기 ──
 const stamp = () => new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '');
-function download(name, text, mime) {
-  const blob = new Blob([text], { type: mime + ';charset=utf-8' }), file = typeof File !== 'undefined' ? new File([blob], name, { type: mime }) : null;
+// Android 앱(WebView)은 blob 다운로드를 못 받으므로 앱의 파일 브리지(GLFile)로 저장·공유한다. 브라우저에서는 기존 방식.
+const NFILE = window.GLFile || null;
+function toB64(u8) { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); }
+function download(name, data, mime) {
+  const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data;
+  if (NFILE) { try { NFILE.saveFile(name, mime, toB64(bytes)); return; } catch (e) { noteErr('내보내기: ' + e.message); toast('내보내기 실패: ' + e.message); return; } }
+  const text = typeof data === 'string' ? data : bytes;
+  const blob = new Blob([text], { type: mime + (typeof data === 'string' ? ';charset=utf-8' : '') }), file = typeof File !== 'undefined' ? new File([blob], name, { type: mime }) : null;
   const dl = () => { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500); };
   if (file && navigator.canShare && navigator.canShare({ files: [file] }) && /Android|iPhone|iPad/i.test(navigator.userAgent)) navigator.share({ files: [file], title: name }).catch(dl); else dl();
 }
@@ -1299,7 +1305,29 @@ function buildPrint() {
   const areaT = S.areas.length ? `<div class="pb"><h2>면적 · 둘레 · 연장</h2><table><tr><th class="l">이름</th><th>구분</th><th>꼭짓점</th><th>면적(㎡)</th><th>평</th><th>둘레/연장(m)</th></tr>${S.areas.map(a => { const r = areaStats(a); return `<tr><td class="l">${esc(a.name)}</td><td>${a.closed ? '닫힘' : '열림'}</td><td>${r.count}</td><td>${a.closed ? r.area.toFixed(2) : ''}</td><td>${a.closed ? r.pyeong.toFixed(1) : ''}</td><td>${(a.closed ? r.perimeter : r.length).toFixed(3)}</td></tr>`; }).join('')}</table></div>` : '';
   $('#printArea').innerHTML = `<h1>측량 성과표</h1><div>출력 ${new Date().toLocaleString('ko-KR')} · 좌표계 ${esc(GL.CRS[S.settings.crs].name)} · 안테나 ${S.settings.antH} m${S.settings.source === 'sim' ? ' · <b>※ 데모(가상) 데이터</b>' : ''}</div>${tables}${findT}${areaT}<img alt="평면도" src="${cv.toDataURL('image/png')}">`;
 }
-$('#xPrint').onclick = () => { buildPrint(); setTimeout(() => window.print(), 100); };
+$('#xPrint').onclick = () => { buildPrint(); setTimeout(() => { if (NFILE) NFILE.printPage(); else window.print(); }, 100); };
+
+// 엑셀(.xlsx): 시트별 숫자 서식 적용. CSV 와 같은 값을 숫자 셀로 담는다
+function xlsxBook() {
+  const n3 = v => (v == null || !isFinite(v)) ? null : +v;
+  const ptRows = S.points.map(p => [p.name, p.code, n3(p.n), n3(p.e), n3(p.z), n3(p.sdH), n3(p.sdV), p.fix || '', p.src, p.ts]);
+  const KD = { CUT: 'cut', FILL: 'fill', OK: '계획고', NA: '높이없음' }, stRows = [];
+  S.segs.forEach(g => { const K = kindOf(g); stas(g).forEach(s => { const sh = S.shots[shotKey(g, s)], kd = sh ? (sh.kind === 'CUT' ? K.cut : sh.kind === 'FILL' ? K.fill : KD[sh.kind]) : '';
+    stRows.push([g.name, g.kind === 'pipe' ? '관로' : '선형', s.name, n3(s.ch), n3(s.n), n3(s.e), n3(s.inv), n3(s.z), sh ? n3(sh.gl) : null, sh && sh.depth != null ? n3(sh.depth) : null, sh && sh.dAlong != null ? n3(sh.dAlong) : null, sh && sh.dCross != null ? n3(sh.dCross) : null, sh ? n3(sh.off) : null, sh ? n3(sh.sdV) : null, kd, sh ? sh.ts : '', sh ? sh.text : '']); }); });
+  const fdRows = Object.values(S.pshots).map(s => [s.name, n3(s.tn), n3(s.te), n3(s.tz), n3(s.n), n3(s.e), n3(s.z), n3(s.dn), n3(s.de), n3(s.dist), n3(s.dz), n3(s.sdH), n3(s.sdV), s.fix || '', s.ts]);
+  const arRows = S.areas.map(a => { const r = areaStats(a); return [a.name, a.closed ? '닫힘' : '열림', r.count, n3(r.area), n3(r.ha), n3(r.pyeong), n3(r.perimeter), n3(r.length), r.centroid ? r.centroid.n : null, r.centroid ? r.centroid.e : null]; });
+  const avRows = []; S.areas.forEach(a => a.pts.forEach((p, i) => avRows.push([a.name, i + 1, p.name, n3(p.n), n3(p.e), n3(p.z)])));
+  const info = [['앱', '간이측량기 v' + VER], ['내보낸 시각', new Date().toLocaleString('ko-KR')], ['좌표계', GL.CRS[S.settings.crs].name], ['안테나 높이(m)', S.settings.antH], ['높이 기준', S.settings.hRef === 'kn' ? '국가지오이드 KNGeoid24(정표고)' : '수신기 고도 그대로'], ['현장 보정', CAL ? '적용(' + (S.calib.pairs || []).length + '점)' : '없음'], ['데이터', S.settings.source === 'sim' ? '데모(가상) 데이터' : '실측']];
+  return XL.build([
+    { name: '측량점', headers: ['이름', '코드', 'N(X)', 'E(Y)', 'Z', 'σH(m)', 'σV(m)', 'FIX', '소스', '시각'], fmts: ['s', 's', 'n3', 'n3', 'n3', 'n3', 'n3', 's', 's', 's'], rows: ptRows },
+    { name: '선형표', headers: ['선형', '종류', '측점', '누가거리(m)', 'N', 'E', '설계 관저/계획고', '굴착저면/설계고', '현황GL', '절·터파기(+)/성토(−)', '종편차(m)', '횡편차(m)', '측점편차(m)', 'σV(m)', '판정', '시각', '마킹문구'], fmts: ['s', 's', 's', 'n3', 'n3', 'n3', 'n3', 'n3', 'n3', 'n3', 'n3', 'n3', 'n3', 'n3', 's', 's', 's'], rows: stRows },
+    { name: '찾기결과', headers: ['이름', '설계N', '설계E', '설계Z', '실측N', '실측E', '실측Z', 'ΔN(북)', 'ΔE(동)', '수평편차(m)', 'Δ높이', 'σH(m)', 'σV(m)', 'FIX', '시각'], fmts: ['s', 'n3', 'n3', 'n3', 'n3', 'n3', 'n3', 'n3', 'n3', 'n3', 'n3', 'n3', 'n3', 's', 's'], rows: fdRows },
+    { name: '면적', headers: ['이름', '구분', '꼭짓점수', '면적(㎡)', '면적(ha)', '면적(평)', '둘레(m)', '연장(m)', '중심N', '중심E'], fmts: ['s', 's', 'n0', 'n3', 'n5', 'n2', 'n3', 'n3', 'n3', 'n3'], rows: arRows },
+    { name: '면적 꼭짓점', headers: ['면적', '번호', '이름', 'N', 'E', 'Z'], fmts: ['s', 'n0', 's', 'n3', 'n3', 'n3'], rows: avRows },
+    { name: '정보', headers: ['항목', '값'], fmts: ['s', 's'], rows: info },
+  ]);
+}
+$('#xXlsx').onclick = () => download('survey-' + stamp() + '.xlsx', xlsxBook(), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
 
 // ───────────── 음성 · 자연어 명령 (AI 보조) ─────────────
 // 1) 로컬 규칙 해석(nlu.js, 오프라인) → 2) 해석 실패 시 LLM 보조(설정 시) → 모든 명령은 같은 검증·확인·실행취소 경로를 지난다.
